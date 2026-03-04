@@ -605,8 +605,8 @@ globalReservedCapacity = globalCapacity * reservedRatio
 
 | Flag                        | Default    | Env Var                   | Description                            |
 | --------------------------- | ---------- | ------------------------- | -------------------------------------- |
-| `--connpool-admin-user`     | `postgres` | `CONNPOOL_ADMIN_USER`     | Admin pool user (PostgreSQL superuser) |
-| `--connpool-admin-password` | -          | `CONNPOOL_ADMIN_PASSWORD` | Admin pool password                    |
+| `--connpool-admin-user`     | `postgres` | `POSTGRES_USER`     | Admin pool user (PostgreSQL superuser) |
+| `--connpool-admin-password` | -          | `POSTGRES_PASSWORD` | Admin pool password                    |
 | `--connpool-admin-capacity` | 5          | -                         | Maximum admin connections              |
 
 ### Per-User Pool Flags (Timeouts Only)

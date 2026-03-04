@@ -149,12 +149,12 @@ func NewConfig(reg *viperutil.Registry) *Config {
 		adminUser: viperutil.Configure(reg, "connpool.admin.user", viperutil.Options[string]{
 			Default:  "postgres",
 			FlagName: "connpool-admin-user",
-			EnvVars:  []string{constants.PgUserEnvVar, "CONNPOOL_ADMIN_USER"},
+			EnvVars:  []string{constants.PgUserEnvVar},
 		}),
 		adminPassword: viperutil.Configure(reg, "connpool.admin.password", viperutil.Options[string]{
 			Default:  "",
 			FlagName: "connpool-admin-password",
-			EnvVars:  []string{constants.PgPasswordEnvVar, "CONNPOOL_ADMIN_PASSWORD"},
+			EnvVars:  []string{constants.PgPasswordEnvVar},
 		}),
 		internalUser: viperutil.Configure(reg, "connpool.internal.user", viperutil.Options[string]{
 			Default:  "postgres",
@@ -231,8 +231,8 @@ func NewConfig(reg *viperutil.Registry) *Config {
 // RegisterFlags registers all connection pool flags with the given FlagSet.
 func (c *Config) RegisterFlags(fs *pflag.FlagSet) {
 	// Admin credential flags
-	fs.String("connpool-admin-user", c.adminUser.Default(), "Admin pool user (PostgreSQL superuser for control operations, overrides POSTGRES_USER or CONNPOOL_ADMIN_USER env var)")
-	fs.String("connpool-admin-password", c.adminPassword.Default(), "Admin pool password (overrides POSTGRES_PASSWORD or CONNPOOL_ADMIN_PASSWORD env var)")
+	fs.String("connpool-admin-user", c.adminUser.Default(), "Admin pool user (PostgreSQL superuser for control operations, overrides POSTGRES_USER env var)")
+	fs.String("connpool-admin-password", c.adminPassword.Default(), "Admin pool password (overrides POSTGRES_PASSWORD env var)")
 	fs.String("connpool-internal-user", c.internalUser.Default(), "Internal user for multipooler system queries (heartbeat, replication tracking)")
 
 	// Admin pool flags (shared across all users)
