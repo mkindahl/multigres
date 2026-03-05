@@ -1155,6 +1155,21 @@ func (s *ShardSetup) SetupTest(t *testing.T, opts ...SetupTestOption) {
 		s.disableMonitorOnAll(t, ctx)
 	}
 
+	// Save any extra GUCs requested via WithResetGuc before we modify state.
+	// Must happen before breakReplication so we capture the pre-test values.
+	extraGucs := make(map[string]map[string]string)
+	if len(config.GucsToReset) > 0 {
+		for name, inst := range s.Multipoolers {
+			client, err := NewMultipoolerClient(inst.Multipooler.GrpcPort)
+			if err != nil {
+				t.Logf("SetupTest: failed to connect to %s to save GUCs: %v", name, err)
+				continue
+			}
+			extraGucs[name] = SaveGUCs(ctx, client.Pooler, config.GucsToReset)
+			client.Close()
+		}
+	}
+
 	// If WithoutReplication is set, actively break replication
 	if config.NoReplication {
 		s.breakReplication(t, ctx)
@@ -1213,6 +1228,11 @@ func (s *ShardSetup) SetupTest(t *testing.T, opts ...SetupTestOption) {
 			// Restore GUCs to baseline values
 			if baselineGucs, ok := s.BaselineGucs[name]; ok && len(baselineGucs) > 0 {
 				RestoreGUCs(cleanupCtx, t, client.Pooler, baselineGucs, name)
+			}
+
+			// Restore any extra GUCs requested via WithResetGuc
+			if saved, ok := extraGucs[name]; ok && len(saved) > 0 {
+				RestoreGUCs(cleanupCtx, t, client.Pooler, saved, name)
 			}
 
 			// Always resume WAL replay (must be after GUC restoration)
