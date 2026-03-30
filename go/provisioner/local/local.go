@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -90,6 +91,21 @@ func (p *localProvisioner) initializePgctldDirectories() error {
 	}
 
 	return nil
+}
+
+// resolveEtcdAdvertiseAddress returns the address etcd should advertise to clients
+// and peers. If "advertise-address" is set in the config it is used as-is;
+// otherwise the OS hostname is returned so that on cloud VMs (e.g. EC2) the
+// real private hostname/IP is used instead of the loopback alias "localhost".
+func resolveEtcdAdvertiseAddress(etcdConfig map[string]any) (string, error) {
+	if addr, ok := etcdConfig["advertise-address"].(string); ok && addr != "" {
+		return addr, nil
+	}
+	hostname, err := os.Hostname()
+	if err != nil {
+		return "", fmt.Errorf("failed to determine etcd advertise address (set etcd.advertise-address explicitly): %w", err)
+	}
+	return hostname, nil
 }
 
 // provisionEtcd provisions etcd using local binary
@@ -174,14 +190,23 @@ func (p *localProvisioner) provisionEtcd(ctx context.Context, req *provisioner.P
 		return nil, fmt.Errorf("failed to create log file: %w", err)
 	}
 
+	// Determine the address etcd will advertise. On EC2 (and other cloud VMs)
+	// the hostname resolves to the private IP, so using "localhost" here causes
+	// etcd to reject its own --initial-cluster entry because the literal string
+	// "localhost" doesn't match the resolved IP in --initial-advertise-peer-urls.
+	advertiseAddr, err := resolveEtcdAdvertiseAddress(etcdConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to provision etcd: %w", err)
+	}
+
 	args := []string{
 		"--name", "default",
 		"--data-dir", dataDir,
 		"--listen-client-urls", fmt.Sprintf("http://0.0.0.0:%d", port),
-		"--advertise-client-urls", fmt.Sprintf("http://localhost:%d", port),
+		"--advertise-client-urls", "http://" + net.JoinHostPort(advertiseAddr, strconv.Itoa(port)),
 		"--listen-peer-urls", fmt.Sprintf("http://0.0.0.0:%d", peerPort),
-		"--initial-advertise-peer-urls", fmt.Sprintf("http://localhost:%d", peerPort),
-		"--initial-cluster", fmt.Sprintf("default=http://localhost:%d", peerPort),
+		"--initial-advertise-peer-urls", "http://" + net.JoinHostPort(advertiseAddr, strconv.Itoa(peerPort)),
+		"--initial-cluster", "default=http://" + net.JoinHostPort(advertiseAddr, strconv.Itoa(peerPort)),
 		"--initial-cluster-state", "new",
 		"--listen-metrics-urls", fmt.Sprintf("http://0.0.0.0:%d", metricsPort),
 		"--log-outputs", logFile,
@@ -217,7 +242,7 @@ func (p *localProvisioner) provisionEtcd(ctx context.Context, req *provisioner.P
 		BinaryPath: etcdBinary,
 		DataDir:    dataDir,
 		Ports:      map[string]int{"tcp": port},
-		FQDN:       "localhost",
+		FQDN:       advertiseAddr,
 		LogFile:    logFile,
 		StartedAt:  time.Now(),
 	}
@@ -229,7 +254,7 @@ func (p *localProvisioner) provisionEtcd(ctx context.Context, req *provisioner.P
 
 	return &provisioner.ProvisionResult{
 		ServiceName: "etcd",
-		FQDN:        "localhost",
+		FQDN:        advertiseAddr,
 		Ports: map[string]int{
 			"tcp": port,
 		},

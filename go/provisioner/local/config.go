@@ -80,10 +80,11 @@ type LocalProvisionerConfig struct {
 
 // EtcdConfig holds etcd service configuration
 type EtcdConfig struct {
-	Version  string `yaml:"version"`
-	DataDir  string `yaml:"data-dir"`
-	Port     int    `yaml:"port"`                // Client port
-	PeerPort int    `yaml:"peer-port,omitempty"` // Optional peer port, defaults to Port+1
+	Version          string `yaml:"version"`
+	DataDir          string `yaml:"data-dir"`
+	Port             int    `yaml:"port"`                        // Client port
+	PeerPort         int    `yaml:"peer-port,omitempty"`         // Optional peer port, defaults to Port+1
+	AdvertiseAddress string `yaml:"advertise-address,omitempty"` // Address advertised to clients and peers; defaults to os.Hostname()
 }
 
 // MultigatewayConfig holds multigateway service configuration
@@ -436,10 +437,11 @@ func (p *localProvisioner) getServiceConfig(service string) map[string]any {
 	switch service {
 	case "etcd":
 		return map[string]any{
-			"version":   p.config.Etcd.Version,
-			"data-dir":  p.config.Etcd.DataDir,
-			"port":      p.config.Etcd.Port,
-			"peer-port": p.config.Etcd.PeerPort,
+			"version":           p.config.Etcd.Version,
+			"data-dir":          p.config.Etcd.DataDir,
+			"port":              p.config.Etcd.Port,
+			"peer-port":         p.config.Etcd.PeerPort,
+			"advertise-address": p.config.Etcd.AdvertiseAddress,
 		}
 	case constants.ServiceMultiadmin:
 		return map[string]any{
