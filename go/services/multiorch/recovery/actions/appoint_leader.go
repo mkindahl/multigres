@@ -85,7 +85,7 @@ func (a *AppointLeaderAction) Execute(ctx context.Context, problem types.Problem
 		if pooler.MultiPooler == nil ||
 			pooler.MultiPooler.Type != clustermetadatapb.PoolerType_PRIMARY ||
 			!pooler.IsLastCheckValid ||
-			!pooler.IsPostgresReady {
+			!pooler.GetStatus().GetPostgresReady() {
 			continue
 		}
 		if types.PrimaryNeedsReplacement(pooler) {
