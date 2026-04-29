@@ -327,7 +327,7 @@ func TestMultiAdminServerGetPoolers(t *testing.T) {
 
 		require.NoError(t, err)
 		require.NotNil(t, resp)
-		assert.Empty(t, resp.Poolers)
+		assert.Empty(t, resp.Entries)
 	})
 
 	t.Run("get poolers filtered by non-existent cell", func(t *testing.T) {
@@ -338,7 +338,7 @@ func TestMultiAdminServerGetPoolers(t *testing.T) {
 
 		require.Error(t, err)
 		require.NotNil(t, resp)
-		assert.Empty(t, resp.Poolers)
+		assert.Empty(t, resp.Entries)
 		assert.Contains(t, err.Error(), "partial results returned due to errors in 1 cell(s)")
 		assert.Contains(t, err.Error(), "failed to get poolers for cell nonexistent")
 	})
@@ -359,7 +359,7 @@ func TestMultiAdminServerGetPoolersMultiCell(t *testing.T) {
 
 		require.NoError(t, err)
 		require.NotNil(t, resp)
-		assert.Len(t, resp.Poolers, 3) // pool1, pool2, pool3
+		assert.Len(t, resp.Entries, 3) // pool1, pool2, pool3
 	})
 
 	t.Run("get poolers filtered by single cell", func(t *testing.T) {
@@ -370,9 +370,9 @@ func TestMultiAdminServerGetPoolersMultiCell(t *testing.T) {
 
 		require.NoError(t, err)
 		require.NotNil(t, resp)
-		assert.Len(t, resp.Poolers, 2) // pool2, pool3
-		for _, pooler := range resp.Poolers {
-			assert.Equal(t, "cell2", pooler.Id.Cell)
+		assert.Len(t, resp.Entries, 2) // pool2, pool3
+		for _, entry := range resp.Entries {
+			assert.Equal(t, "cell2", entry.GetPooler().Id.Cell)
 		}
 	})
 
@@ -384,9 +384,9 @@ func TestMultiAdminServerGetPoolersMultiCell(t *testing.T) {
 
 		require.NoError(t, err)
 		require.NotNil(t, resp)
-		assert.Len(t, resp.Poolers, 2) // pool1 and pool2
-		for _, pooler := range resp.Poolers {
-			assert.Equal(t, "db1", pooler.Database)
+		assert.Len(t, resp.Entries, 2) // pool1 and pool2
+		for _, entry := range resp.Entries {
+			assert.Equal(t, "db1", entry.GetPooler().Database)
 		}
 	})
 
@@ -399,9 +399,9 @@ func TestMultiAdminServerGetPoolersMultiCell(t *testing.T) {
 
 		require.NoError(t, err)
 		require.NotNil(t, resp)
-		assert.Len(t, resp.Poolers, 1) // only pool2
-		assert.Equal(t, "cell2", resp.Poolers[0].Id.Cell)
-		assert.Equal(t, "db1", resp.Poolers[0].Database)
+		assert.Len(t, resp.Entries, 1) // only pool2
+		assert.Equal(t, "cell2", resp.Entries[0].GetPooler().Id.Cell)
+		assert.Equal(t, "db1", resp.Entries[0].GetPooler().Database)
 	})
 
 	t.Run("get poolers filtered by non-existent database", func(t *testing.T) {
@@ -412,7 +412,7 @@ func TestMultiAdminServerGetPoolersMultiCell(t *testing.T) {
 
 		require.NoError(t, err)
 		require.NotNil(t, resp)
-		assert.Empty(t, resp.Poolers)
+		assert.Empty(t, resp.Entries)
 	})
 
 	t.Run("get poolers filtered by database db2", func(t *testing.T) {
@@ -423,9 +423,9 @@ func TestMultiAdminServerGetPoolersMultiCell(t *testing.T) {
 
 		require.NoError(t, err)
 		require.NotNil(t, resp)
-		assert.Len(t, resp.Poolers, 1) // only pool3
-		assert.Equal(t, "db2", resp.Poolers[0].Database)
-		assert.Equal(t, "pool3", resp.Poolers[0].Id.Name)
+		assert.Len(t, resp.Entries, 1) // only pool3
+		assert.Equal(t, "db2", resp.Entries[0].GetPooler().Database)
+		assert.Equal(t, "pool3", resp.Entries[0].GetPooler().Id.Name)
 	})
 
 	t.Run("get poolers with empty database filter returns all", func(t *testing.T) {
@@ -436,7 +436,7 @@ func TestMultiAdminServerGetPoolersMultiCell(t *testing.T) {
 
 		require.NoError(t, err)
 		require.NotNil(t, resp)
-		assert.Len(t, resp.Poolers, 3) // all poolers
+		assert.Len(t, resp.Entries, 3) // all poolers
 	})
 }
 

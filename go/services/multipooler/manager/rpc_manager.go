@@ -320,6 +320,13 @@ func (pm *MultiPoolerManager) Status(ctx context.Context) (*multipoolermanagerda
 	walPosition, _ := pm.getWALPosition(ctx)
 	poolerStatus.WalPosition = walPosition
 
+	// Get postgres PID from pgctld (best-effort).
+	if pm.pgctldClient != nil {
+		if pgResp, err := pm.pgctldClient.Status(ctx, &pgctldpb.StatusRequest{}); err == nil {
+			poolerStatus.PostgresPid = pgResp.Pid
+		}
+	}
+
 	// Get cohort members from the current rule (best-effort).
 	if pos, err := pm.rules.observePosition(ctx); err != nil {
 		pm.logger.WarnContext(ctx, "Failed to read current rule for status", "error", err)

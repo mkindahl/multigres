@@ -181,9 +181,19 @@ message GetPoolersRequest {
   string shard = 3;
 }
 
+// PoolerEntry combines topology metadata with runtime state for a single pooler.
+message PoolerEntry {
+  // pooler contains the topology metadata from etcd.
+  clustermetadata.MultiPooler pooler = 1;
+  // postgres_pid is the PID of the running PostgreSQL process.
+  // Zero if the process is not running or the pooler is unreachable.
+  int32 postgres_pid = 2;
+}
+
 // GetPoolersResponse contains the filtered poolers
 message GetPoolersResponse {
-  repeated clustermetadata.MultiPooler poolers = 1;
+  // entries contains one PoolerEntry per pooler, including runtime state such as PID.
+  repeated PoolerEntry entries = 1;
 }
 
 // GetOrchsRequest requests orchestrators with optional filtering

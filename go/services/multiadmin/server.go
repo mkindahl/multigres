@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 
 	"github.com/multigres/multigres/go/common/rpcclient"
 	"github.com/multigres/multigres/go/common/topoclient"
@@ -226,14 +227,13 @@ func (s *MultiAdminServer) GetGateways(ctx context.Context, req *multiadminpb.Ge
 	return response, nil
 }
 
-// GetPoolers retrieves poolers filtered by cells and/or database
+// GetPoolers retrieves poolers filtered by cells and/or database, including runtime PID.
 func (s *MultiAdminServer) GetPoolers(ctx context.Context, req *multiadminpb.GetPoolersRequest) (*multiadminpb.GetPoolersResponse, error) {
 	s.logger.DebugContext(ctx, "GetPoolers request received", "cells", req.Cells, "database", req.Database)
 
 	// Determine which cells to query
 	cellsToQuery := req.Cells
 	if len(cellsToQuery) == 0 {
-		// If no cells specified, get all cells
 		allCells, err := s.ts.GetCellNames(ctx)
 		if err != nil {
 			s.logger.ErrorContext(ctx, "Failed to get all cell names", "error", err)
@@ -243,12 +243,10 @@ func (s *MultiAdminServer) GetPoolers(ctx context.Context, req *multiadminpb.Get
 	}
 
 	var allPoolers []*clustermetadatapb.MultiPooler
-	var errors []error
+	var topoErrors []error
 
-	// Query each cell for poolers
 	for _, cellName := range cellsToQuery {
 		var opts *topoclient.GetMultiPoolersByCellOptions
-		// filter by database and shard if specified
 		if req.Database != "" {
 			opts = &topoclient.GetMultiPoolersByCellOptions{
 				DatabaseShard: &topoclient.DatabaseShard{
@@ -260,25 +258,37 @@ func (s *MultiAdminServer) GetPoolers(ctx context.Context, req *multiadminpb.Get
 		poolerInfos, err := s.ts.GetMultiPoolersByCell(ctx, cellName, opts)
 		if err != nil {
 			s.logger.ErrorContext(ctx, "Failed to get poolers for cell", "cell", cellName, "error", err)
-			errors = append(errors, fmt.Errorf("failed to get poolers for cell %s: %w", cellName, err))
+			topoErrors = append(topoErrors, fmt.Errorf("failed to get poolers for cell %s: %w", cellName, err))
 			continue
 		}
-
-		// Convert to protobuf
 		for _, info := range poolerInfos {
-			pooler := info.MultiPooler
-			allPoolers = append(allPoolers, pooler)
+			allPoolers = append(allPoolers, info.MultiPooler)
 		}
 	}
 
-	response := &multiadminpb.GetPoolersResponse{
-		Poolers: allPoolers,
+	// Fetch runtime PID from each pooler in parallel (best-effort: errors → pid=0).
+	entries := make([]*multiadminpb.PoolerEntry, len(allPoolers))
+	var wg sync.WaitGroup
+	for i, pooler := range allPoolers {
+		entries[i] = &multiadminpb.PoolerEntry{Pooler: pooler}
+		wg.Add(1)
+		go func(idx int, mp *clustermetadatapb.MultiPooler) {
+			defer wg.Done()
+			resp, err := s.rpcClient.Status(ctx, mp, &multipoolermanagerdatapb.StatusRequest{})
+			if err != nil {
+				s.logger.DebugContext(ctx, "GetPoolers: could not fetch status for PID", "pooler", mp.GetId().GetName(), "error", err)
+				return
+			}
+			entries[idx].PostgresPid = resp.GetStatus().GetPostgresPid()
+		}(i, pooler)
 	}
+	wg.Wait()
 
-	// Return partial results with error if some cells failed
-	if len(errors) > 0 {
-		s.logger.DebugContext(ctx, "GetPoolers request completed with partial results", "count", len(allPoolers), "errors", len(errors))
-		return response, fmt.Errorf("partial results returned due to errors in %d cell(s): %v", len(errors), errors)
+	response := &multiadminpb.GetPoolersResponse{Entries: entries}
+
+	if len(topoErrors) > 0 {
+		s.logger.DebugContext(ctx, "GetPoolers request completed with partial results", "count", len(allPoolers), "errors", len(topoErrors))
+		return response, fmt.Errorf("partial results returned due to errors in %d cell(s): %v", len(topoErrors), topoErrors)
 	}
 
 	s.logger.DebugContext(ctx, "GetPoolers request completed successfully", "count", len(allPoolers))
