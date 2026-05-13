@@ -182,7 +182,7 @@ func TestGroupProblemsByShard(t *testing.T) {
 
 	problems := []types.Problem{
 		{
-			Code:     types.ProblemLeaderIsDead,
+			Code:     types.ProblemLeaderIsDown,
 			PoolerID: poolerID1,
 			ShardKey: &clustermetadatapb.ShardKey{Database: "db1", TableGroup: "tg1", Shard: "0"},
 		},
@@ -192,7 +192,7 @@ func TestGroupProblemsByShard(t *testing.T) {
 			ShardKey: &clustermetadatapb.ShardKey{Database: "db1", TableGroup: "tg1", Shard: "0"},
 		},
 		{
-			Code:     types.ProblemLeaderIsDead,
+			Code:     types.ProblemLeaderIsDown,
 			PoolerID: poolerID3,
 			ShardKey: &clustermetadatapb.ShardKey{Database: "db2", TableGroup: "tg2", Shard: "0"},
 		},
@@ -239,7 +239,7 @@ func TestPrioritySorting(t *testing.T) {
 			Priority: types.PriorityHigh,
 		},
 		{
-			Code:     types.ProblemLeaderIsDead,
+			Code:     types.ProblemLeaderIsDown,
 			PoolerID: poolerID1,
 			ShardKey: &clustermetadatapb.ShardKey{Database: "db1", TableGroup: "tg1", Shard: "0"},
 			Priority: types.PriorityEmergency,
@@ -260,7 +260,7 @@ func TestPrioritySorting(t *testing.T) {
 	// Verify order: Emergency > High > Normal
 	require.Len(t, problems, 3)
 	assert.Equal(t, types.PriorityEmergency, problems[0].Priority)
-	assert.Equal(t, types.ProblemLeaderIsDead, problems[0].Code)
+	assert.Equal(t, types.ProblemLeaderIsDown, problems[0].Code)
 
 	assert.Equal(t, types.PriorityHigh, problems[1].Priority)
 	assert.Equal(t, types.ProblemReplicaNotReplicating, problems[1].Code)
@@ -308,12 +308,12 @@ func TestGroupProblemsByShard_DifferentShards(t *testing.T) {
 
 	problems := []types.Problem{
 		{
-			Code:     types.ProblemLeaderIsDead,
+			Code:     types.ProblemLeaderIsDown,
 			PoolerID: poolerID1,
 			ShardKey: &clustermetadatapb.ShardKey{Database: "db1", TableGroup: "tg1", Shard: "0"},
 		},
 		{
-			Code:     types.ProblemLeaderIsDead,
+			Code:     types.ProblemLeaderIsDown,
 			PoolerID: poolerID2,
 			ShardKey: &clustermetadatapb.ShardKey{Database: "db1", TableGroup: "tg1", Shard: "1"}, // Different shard
 		},
@@ -348,7 +348,7 @@ func TestRecheckProblem_PoolerNotFound(t *testing.T) {
 
 	// Create problem
 	problem := types.Problem{
-		Code:      types.ProblemLeaderIsDead,
+		Code:      types.ProblemLeaderIsDown,
 		CheckName: "PrimaryDeadCheck",
 		PoolerID:  poolerID,
 		ShardKey:  &clustermetadatapb.ShardKey{Database: "db1", TableGroup: "tg1", Shard: "0"},
@@ -397,7 +397,7 @@ func TestFilterAndPrioritize_ShardWideOnly(t *testing.T) {
 			},
 		},
 		{
-			Code:     types.ProblemLeaderIsDead,
+			Code:     types.ProblemLeaderIsDown,
 			PoolerID: poolerID1,
 			Priority: types.PriorityEmergency,
 			Scope:    types.ScopeShard,
@@ -424,7 +424,7 @@ func TestFilterAndPrioritize_ShardWideOnly(t *testing.T) {
 
 	// Should return only the shard-wide problem (PrimaryDead)
 	require.Len(t, filtered, 1)
-	assert.Equal(t, types.ProblemLeaderIsDead, filtered[0].Code)
+	assert.Equal(t, types.ProblemLeaderIsDown, filtered[0].Code)
 	assert.Equal(t, types.PriorityEmergency, filtered[0].Priority)
 }
 
@@ -531,7 +531,7 @@ func TestFilterAndPrioritize_MultipleShardWide(t *testing.T) {
 			},
 		},
 		{
-			Code:     types.ProblemLeaderIsDead,
+			Code:     types.ProblemLeaderIsDown,
 			PoolerID: poolerID2,
 			Priority: types.PriorityEmergency,
 			Scope:    types.ScopeShard,
@@ -562,7 +562,7 @@ func (m *mockPrimaryDeadAnalyzer) Name() types.CheckName {
 }
 
 func (m *mockPrimaryDeadAnalyzer) ProblemCode() types.ProblemCode {
-	return types.ProblemLeaderIsDead
+	return types.ProblemLeaderIsDown
 }
 
 func (m *mockPrimaryDeadAnalyzer) RecoveryAction() types.RecoveryAction {
@@ -574,7 +574,7 @@ func (m *mockPrimaryDeadAnalyzer) Analyze(sa *analysis.ShardAnalysis) ([]types.P
 	for _, a := range sa.Analyses {
 		if a.IsLeader && !a.LastCheckValid {
 			problems = append(problems, types.Problem{
-				Code:           types.ProblemLeaderIsDead,
+				Code:           types.ProblemLeaderIsDown,
 				CheckName:      m.Name(),
 				PoolerID:       a.PoolerID,
 				ShardKey:       a.ShardKey,
@@ -1105,7 +1105,7 @@ func TestRecoveryLoop_PostRecoveryRefresh(t *testing.T) {
 	assert.Equal(t, types.ScopeShard, problems[0].Scope)
 
 	// Observe the problem as unhealthy (this would normally happen in performRecoveryCycle)
-	engine.recoveryGracePeriodTracker.Observe(types.ProblemLeaderIsDead, problems[0].EntityID(), problems[0].RecoveryAction, false)
+	engine.recoveryGracePeriodTracker.Observe(types.ProblemLeaderIsDown, problems[0].EntityID(), problems[0].RecoveryAction, false)
 
 	// Now fix the primary in the fake client so validation will pass
 	fakeClient.SetStatusResponse("multipooler-cell1-primary-pooler", &multipoolermanagerdatapb.StatusResponse{

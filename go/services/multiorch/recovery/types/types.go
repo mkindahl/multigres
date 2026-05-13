@@ -38,7 +38,7 @@ const (
 	ProblemShardNeedsInitialization ProblemCode = "ShardNeedsInitialization"
 
 	// Leader problems (catastrophic - block everything else).
-	ProblemLeaderIsDead      ProblemCode = "LeaderIsDead"
+	ProblemLeaderIsDown      ProblemCode = "LeaderIsDown"
 	ProblemLeaderDiskStalled ProblemCode = "LeaderDiskStalled"
 	ProblemStaleLeader       ProblemCode = "StaleLeader"
 

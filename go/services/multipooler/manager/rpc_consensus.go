@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	commonconsensus "github.com/multigres/multigres/go/common/consensus"
@@ -357,23 +358,31 @@ func (pm *MultiPoolerManager) getInconsistentConsensusStatus(ctx context.Context
 }
 
 // buildAvailabilityStatus returns the current AvailabilityStatus for this node.
-// Leaders always publish a LeadershipStatus. Returns nil if no signals are set
-// and no leadership context exists.
+// Leaders that have resigned publish a LeadershipStatus; any pooler in graceful
+// shutdown publishes a LifecycleStatus. Returns nil only when no signals are
+// set, so the wire never carries an empty AvailabilityStatus.
 func (pm *MultiPoolerManager) buildAvailabilityStatus() *clustermetadatapb.AvailabilityStatus {
-	ls := pm.buildLeadershipStatus()
-	if ls == nil {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+
+	ls := pm.buildLeadershipStatusLocked()
+	lc := pm.buildLifecycleStatusLocked()
+
+	if ls == nil && lc == nil {
 		return nil
 	}
-	return &clustermetadatapb.AvailabilityStatus{LeadershipStatus: ls}
+	return &clustermetadatapb.AvailabilityStatus{
+		LeadershipStatus: ls,
+		LifecycleStatus:  lc,
+	}
 }
 
-// buildLeadershipStatus returns the LeadershipStatus for this node. Non-nil only
-// when resignedPrimaryAtTerm is set (i.e. after a BeginTerm REVOKE). Nil means
-// this node has not recently held or resigned from primary leadership.
-func (pm *MultiPoolerManager) buildLeadershipStatus() *clustermetadatapb.LeadershipStatus {
-	pm.mu.Lock()
+// buildLeadershipStatusLocked returns the LeadershipStatus for this node.
+// Non-nil only when resignedLeaderAtTerm is set (i.e. after a BeginTerm REVOKE).
+// Nil means this node has not recently held or resigned from primary leadership.
+// Caller must hold pm.mu.
+func (pm *MultiPoolerManager) buildLeadershipStatusLocked() *clustermetadatapb.LeadershipStatus {
 	resignedTerm := pm.resignedLeaderAtTerm
-	pm.mu.Unlock()
 
 	if resignedTerm == 0 {
 		return nil
@@ -385,10 +394,25 @@ func (pm *MultiPoolerManager) buildLeadershipStatus() *clustermetadatapb.Leaders
 	}
 }
 
-// setResignedLeaderAtTerm records that this node is requesting demotion as primary
-// for the given term. The signal is included in subsequent StatusResponses so the
-// coordinator can trigger an immediate election.
-// Requires the action lock (ctx must be an action-lock context).
+// buildLifecycleStatusLocked returns the LifecycleStatus for this node.
+// Nil when lifecycleSignal is UNKNOWN (the implicit default). For
+// LIFECYCLE_SIGNAL_SHUTTING_DOWN, shutdown_deadline is recomputed from the
+// stored absolute deadline at every call so the wire value is always
+// "remaining time at send", as the proto contract requires.
+// Caller must hold pm.mu.
+func (pm *MultiPoolerManager) buildLifecycleStatusLocked() *clustermetadatapb.LifecycleStatus {
+	if pm.lifecycleSignal == clustermetadatapb.LifecycleSignal_LIFECYCLE_SIGNAL_UNKNOWN {
+		return nil
+	}
+
+	out := &clustermetadatapb.LifecycleStatus{Signal: pm.lifecycleSignal}
+	if pm.lifecycleSignal == clustermetadatapb.LifecycleSignal_LIFECYCLE_SIGNAL_SHUTTING_DOWN && !pm.lifecycleDeadlineAt.IsZero() {
+		remaining := max(time.Until(pm.lifecycleDeadlineAt), 0)
+		out.ShutdownDeadline = durationpb.New(remaining)
+	}
+	return out
+}
+
 func (pm *MultiPoolerManager) setResignedLeaderAtTerm(ctx context.Context, term int64) error {
 	if err := AssertActionLockHeld(ctx); err != nil {
 		return err

@@ -16,6 +16,7 @@ syntax = "proto3";
 
 package clustermetadata;
 
+import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
 
 option go_package = "github.com/multigres/multigres/go/pb/clustermetadata";
@@ -531,6 +532,67 @@ message LeadershipStatus {
   LeadershipSignal signal = 2;
 }
 
+// LifecycleSignal describes the lifecycle state of the pooler.
+//
+// This is distinct from LeadershipSignal (which is consensus-role state and
+// leader-only). LifecycleSignal applies to any pooler regardless of role and
+// the signals are orthogonal to leadership status. For example, a replica can
+// be in the SHUTTING_DOWN state, and a primary can request demotion while also
+// being in the SHUTTING_DOWN state.
+//
+// Absence of LifecycleStatus is treated as "unknown" by consumers, matching
+// the AvailabilityStatus convention ("treat absence as 'unknown,' not 'unfit'").
+// LIFECYCLE_SIGNAL_UNKNOWN is reserved for the genuinely-unknown case;
+// LIFECYCLE_SIGNAL_RUNNING is the explicit "operating normally" value.
+enum LifecycleSignal {
+  // Field was not intentionally set. Distinct from RUNNING: a producer that
+  // has not yet established its lifecycle state should emit UNKNOWN (or omit
+  // LifecycleStatus entirely), not RUNNING.
+  LIFECYCLE_SIGNAL_UNKNOWN = 0;
+
+  // Pooler is operating normally and serving traffic. This is the default
+  // explicit value to indicate a healthy lifecycle state.
+  LIFECYCLE_SIGNAL_RUNNING = 1;
+
+  // Pooler has begun graceful shutdown. A shutdown_deadline in the snapshot
+  // tells the coordinator the upper bound by which the pooler guarantees
+  // Postgres is down. The coordinator may use this as a failover trigger if no
+  // STOPPED snapshot or stream EOF arrives by then.
+  //
+  // For a primary, the coordinator treats this as a voluntary departure and
+  // arms the deadline timer. For a replica it serves as a hint that reconnect
+  // attempts are wasted; the deadline is informational.
+  LIFECYCLE_SIGNAL_SHUTTING_DOWN = 2;
+
+  // Pooler has completed graceful shutdown: Postgres is stopped, drain is
+  // complete, the process is about to exit. The coordinator should fail over
+  // immediately for a primary; for a replica, mark as gone.
+  LIFECYCLE_SIGNAL_STOPPED = 3;
+}
+
+// LifecycleStatus is published by any pooler regardless of role to communicate
+// process-level lifecycle state (currently graceful shutdown intent and
+// completion). Absence is treated as "unknown" — consumers must not assume
+// "running" without an explicit LIFECYCLE_SIGNAL_RUNNING.
+message LifecycleStatus {
+  LifecycleSignal signal = 1;
+
+  // Only meaningful with LIFECYCLE_SIGNAL_SHUTTING_DOWN. The pooler's hard
+  // upper bound on completing shutdown, expressed as a Duration relative to the
+  // moment this snapshot was sent. The coordinator interprets it as "deadline =
+  // local_receipt_time + shutdown_deadline" — using a Duration (rather than a
+  // Timestamp) avoids clock-skew between pooler and coordinator, though it
+  // remains affected by network latency (which only delays the local timer in
+  // the safe direction).
+  //
+  // The pooler's escalation budget MUST fit inside shutdown_deadline and the
+  // pooler MUST guarantee process exit by that deadline.
+  //
+  // Both producer and consumer enforce a minimum value. The consumer clamps and
+  // warn-logs any received value below the minimum.
+  google.protobuf.Duration shutdown_deadline = 2;
+}
+
 // AvailabilityStatus carries best-effort operational fitness signals for a pooler.
 // Unlike ConsensusStatus (which is authoritative and backed by postgres WAL and
 // on-disk state), AvailabilityStatus is in-memory and may be absent after a
@@ -546,6 +608,10 @@ message LeadershipStatus {
 // PoolerHealthState.AvailabilityStatus so the analyzer reads from one place
 // regardless of source.
 message AvailabilityStatus {
-  // leadership_status is only set by poolers that are or have been the consensus leader.
+  // leadership_status is only set by poolers that are or have been the
+  // consensus leader.
   LeadershipStatus leadership_status = 1;
+
+  // lifecycle_status applies to any pooler regardless of role.
+  LifecycleStatus lifecycle_status = 2;
 }

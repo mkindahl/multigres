@@ -1955,6 +1955,7 @@ func TestAvailabilityStatus(t *testing.T) {
 		require.NotNil(t, av.LeadershipStatus)
 		assert.Equal(t, int64(7), av.LeadershipStatus.LeaderTerm)
 		assert.Equal(t, clustermetadatapb.LeadershipSignal_LEADERSHIP_SIGNAL_REQUESTING_DEMOTION, av.LeadershipStatus.Signal)
+		assert.Nil(t, av.LifecycleStatus)
 	})
 
 	t.Run("resignedLeaderAtTerm cleared makes buildAvailabilityStatus return nil", func(t *testing.T) {
@@ -1962,5 +1963,56 @@ func TestAvailabilityStatus(t *testing.T) {
 		pm.resignedLeaderAtTerm = 3
 		pm.resignedLeaderAtTerm = 0
 		assert.Nil(t, pm.buildAvailabilityStatus())
+	})
+
+	t.Run("lifecycle SHUTTING_DOWN alone makes buildAvailabilityStatus return non-nil with remaining deadline", func(t *testing.T) {
+		pm := &MultiPoolerManager{}
+		pm.lifecycleSignal = clustermetadatapb.LifecycleSignal_LIFECYCLE_SIGNAL_SHUTTING_DOWN
+		pm.lifecycleDeadlineAt = time.Now().Add(30 * time.Second)
+		av := pm.buildAvailabilityStatus()
+		require.NotNil(t, av)
+		assert.Nil(t, av.LeadershipStatus)
+		require.NotNil(t, av.LifecycleStatus)
+		assert.Equal(t, clustermetadatapb.LifecycleSignal_LIFECYCLE_SIGNAL_SHUTTING_DOWN, av.LifecycleStatus.Signal)
+		// Allow a small wall-clock tolerance for the time elapsed between
+		// the time.Now() above and the recompute inside buildLifecycleStatus.
+		require.NotNil(t, av.LifecycleStatus.ShutdownDeadline)
+		remaining := av.LifecycleStatus.ShutdownDeadline.AsDuration()
+		assert.Greater(t, remaining, 29*time.Second)
+		assert.LessOrEqual(t, remaining, 30*time.Second)
+	})
+
+	t.Run("lifecycle SHUTTING_DOWN with elapsed deadline returns zero remaining, not negative", func(t *testing.T) {
+		pm := &MultiPoolerManager{}
+		pm.lifecycleSignal = clustermetadatapb.LifecycleSignal_LIFECYCLE_SIGNAL_SHUTTING_DOWN
+		pm.lifecycleDeadlineAt = time.Now().Add(-5 * time.Second)
+		av := pm.buildAvailabilityStatus()
+		require.NotNil(t, av)
+		require.NotNil(t, av.LifecycleStatus)
+		require.NotNil(t, av.LifecycleStatus.ShutdownDeadline)
+		assert.Equal(t, time.Duration(0), av.LifecycleStatus.ShutdownDeadline.AsDuration())
+	})
+
+	t.Run("lifecycle STOPPED alone makes buildAvailabilityStatus return non-nil without deadline", func(t *testing.T) {
+		pm := &MultiPoolerManager{}
+		pm.lifecycleSignal = clustermetadatapb.LifecycleSignal_LIFECYCLE_SIGNAL_STOPPED
+		av := pm.buildAvailabilityStatus()
+		require.NotNil(t, av)
+		require.NotNil(t, av.LifecycleStatus)
+		assert.Equal(t, clustermetadatapb.LifecycleSignal_LIFECYCLE_SIGNAL_STOPPED, av.LifecycleStatus.Signal)
+		// STOPPED does not carry a deadline.
+		assert.Nil(t, av.LifecycleStatus.ShutdownDeadline)
+	})
+
+	t.Run("lifecycle and resignedLeaderAtTerm both set returns both", func(t *testing.T) {
+		pm := &MultiPoolerManager{}
+		pm.resignedLeaderAtTerm = 5
+		pm.lifecycleSignal = clustermetadatapb.LifecycleSignal_LIFECYCLE_SIGNAL_STOPPED
+		av := pm.buildAvailabilityStatus()
+		require.NotNil(t, av)
+		require.NotNil(t, av.LeadershipStatus)
+		assert.Equal(t, int64(5), av.LeadershipStatus.LeaderTerm)
+		require.NotNil(t, av.LifecycleStatus)
+		assert.Equal(t, clustermetadatapb.LifecycleSignal_LIFECYCLE_SIGNAL_STOPPED, av.LifecycleStatus.Signal)
 	})
 }

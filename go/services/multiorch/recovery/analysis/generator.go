@@ -456,7 +456,7 @@ func (g *AnalysisGenerator) computeShardLevelFields(sa *ShardAnalysis, poolers m
 		sa.LeaderHasResigned = types.LeaderNeedsReplacement(topologyPrimary)
 		// LeaderReachable requires the topology leader to be serving as PRIMARY and
 		// not have resigned. A resigned leader has voluntarily stepped down;
-		// treating it as reachable would prevent LeaderIsDead detection even when
+		// treating it as reachable would prevent LeaderIsDown detection even when
 		// postgres is still running on the demoted node.
 		sa.LeaderReachable = topologyPrimary.IsLastCheckValid &&
 			topologyPrimary.GetStatus().GetPostgresReady() &&

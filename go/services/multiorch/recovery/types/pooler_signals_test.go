@@ -1,0 +1,181 @@
+// Copyright 2026 Supabase, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package types
+
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+
+	clustermetadatapb "github.com/multigres/multigres/go/pb/clustermetadata"
+	multiorchdatapb "github.com/multigres/multigres/go/pb/multiorchdata"
+)
+
+// poolerWithLeaderTerm builds a PoolerHealthState whose ConsensusStatus has
+// the given primary term. Used to construct fixtures that exercise the
+// staleness check on REQUESTING_DEMOTION.
+func poolerWithLeaderTerm(t *testing.T, primaryTerm int64) *multiorchdatapb.PoolerHealthState {
+	t.Helper()
+	id := &clustermetadatapb.ID{Name: "mp1"}
+	return &multiorchdatapb.PoolerHealthState{
+		MultiPooler: &clustermetadatapb.MultiPooler{Id: id},
+		ConsensusStatus: &clustermetadatapb.ConsensusStatus{
+			Id: id,
+			CurrentPosition: &clustermetadatapb.PoolerPosition{
+				Rule: &clustermetadatapb.ShardRule{
+					LeaderId: id,
+					RuleNumber: &clustermetadatapb.RuleNumber{
+						CoordinatorTerm: primaryTerm,
+					},
+				},
+			},
+		},
+	}
+}
+
+func TestLeaderNeedsReplacement(t *testing.T) {
+	t.Run("nil PoolerHealthState returns false", func(t *testing.T) {
+		assert.False(t, LeaderNeedsReplacement(nil))
+	})
+
+	t.Run("no AvailabilityStatus returns false", func(t *testing.T) {
+		p := poolerWithLeaderTerm(t, 5)
+		assert.False(t, LeaderNeedsReplacement(p))
+	})
+
+	t.Run("AvailabilityStatus with no signals returns false", func(t *testing.T) {
+		p := poolerWithLeaderTerm(t, 5)
+		p.AvailabilityStatus = &clustermetadatapb.AvailabilityStatus{}
+		assert.False(t, LeaderNeedsReplacement(p))
+	})
+
+	t.Run("REQUESTING_DEMOTION with matching term returns true", func(t *testing.T) {
+		p := poolerWithLeaderTerm(t, 5)
+		p.AvailabilityStatus = &clustermetadatapb.AvailabilityStatus{
+			LeadershipStatus: &clustermetadatapb.LeadershipStatus{
+				LeaderTerm: 5,
+				Signal:     clustermetadatapb.LeadershipSignal_LEADERSHIP_SIGNAL_REQUESTING_DEMOTION,
+			},
+		}
+		assert.True(t, LeaderNeedsReplacement(p))
+	})
+
+	t.Run("REQUESTING_DEMOTION with stale term returns false", func(t *testing.T) {
+		// Signal carries term 3 but node's current primary term is 5 — stale.
+		p := poolerWithLeaderTerm(t, 5)
+		p.AvailabilityStatus = &clustermetadatapb.AvailabilityStatus{
+			LeadershipStatus: &clustermetadatapb.LeadershipStatus{
+				LeaderTerm: 3,
+				Signal:     clustermetadatapb.LeadershipSignal_LEADERSHIP_SIGNAL_REQUESTING_DEMOTION,
+			},
+		}
+		assert.False(t, LeaderNeedsReplacement(p))
+	})
+
+	t.Run("LeadershipSignal_ACTIVE returns false even at matching term", func(t *testing.T) {
+		p := poolerWithLeaderTerm(t, 5)
+		p.AvailabilityStatus = &clustermetadatapb.AvailabilityStatus{
+			LeadershipStatus: &clustermetadatapb.LeadershipStatus{
+				LeaderTerm: 5,
+				Signal:     clustermetadatapb.LeadershipSignal_LEADERSHIP_SIGNAL_ACTIVE,
+			},
+		}
+		assert.False(t, LeaderNeedsReplacement(p))
+	})
+
+	t.Run("LIFECYCLE_SIGNAL_SHUTTING_DOWN does NOT trigger replacement", func(t *testing.T) {
+		// SHUTTING_DOWN is an announcement that arms the deadline timer in
+		// health_stream.go; it must not fire failover on its own because
+		// Postgres is still running on the old leader at that moment.
+		p := &multiorchdatapb.PoolerHealthState{
+			AvailabilityStatus: &clustermetadatapb.AvailabilityStatus{
+				LifecycleStatus: &clustermetadatapb.LifecycleStatus{
+					Signal: clustermetadatapb.LifecycleSignal_LIFECYCLE_SIGNAL_SHUTTING_DOWN,
+				},
+			},
+		}
+		assert.False(t, LeaderNeedsReplacement(p))
+	})
+
+	t.Run("LIFECYCLE_SIGNAL_STOPPED alone does NOT trigger replacement", func(t *testing.T) {
+		// LeaderNeedsReplacement no longer reads LifecycleStatus directly. A
+		// stopped pooler triggers failover via the health-stream observer
+		// synthesizing REQUESTING_DEMOTION on the primary's LeadershipStatus
+		// — not via the lifecycle signal alone. A bare STOPPED with no
+		// LeadershipStatus must therefore return false here.
+		p := &multiorchdatapb.PoolerHealthState{
+			AvailabilityStatus: &clustermetadatapb.AvailabilityStatus{
+				LifecycleStatus: &clustermetadatapb.LifecycleStatus{
+					Signal: clustermetadatapb.LifecycleSignal_LIFECYCLE_SIGNAL_STOPPED,
+				},
+			},
+		}
+		assert.False(t, LeaderNeedsReplacement(p))
+	})
+
+	t.Run("LIFECYCLE_SIGNAL_RUNNING returns false", func(t *testing.T) {
+		p := &multiorchdatapb.PoolerHealthState{
+			AvailabilityStatus: &clustermetadatapb.AvailabilityStatus{
+				LifecycleStatus: &clustermetadatapb.LifecycleStatus{
+					Signal: clustermetadatapb.LifecycleSignal_LIFECYCLE_SIGNAL_RUNNING,
+				},
+			},
+		}
+		assert.False(t, LeaderNeedsReplacement(p))
+	})
+
+	t.Run("LIFECYCLE_SIGNAL_UNKNOWN with no LeadershipStatus returns false", func(t *testing.T) {
+		p := &multiorchdatapb.PoolerHealthState{
+			AvailabilityStatus: &clustermetadatapb.AvailabilityStatus{
+				LifecycleStatus: &clustermetadatapb.LifecycleStatus{
+					Signal: clustermetadatapb.LifecycleSignal_LIFECYCLE_SIGNAL_UNKNOWN,
+				},
+			},
+		}
+		assert.False(t, LeaderNeedsReplacement(p))
+	})
+
+	t.Run("REQUESTING_DEMOTION with SHUTTING_DOWN lifecycle returns true", func(t *testing.T) {
+		// The lifecycle signal is irrelevant; only the leadership signal matters.
+		p := poolerWithLeaderTerm(t, 5)
+		p.AvailabilityStatus = &clustermetadatapb.AvailabilityStatus{
+			LeadershipStatus: &clustermetadatapb.LeadershipStatus{
+				LeaderTerm: 5,
+				Signal:     clustermetadatapb.LeadershipSignal_LEADERSHIP_SIGNAL_REQUESTING_DEMOTION,
+			},
+			LifecycleStatus: &clustermetadatapb.LifecycleStatus{
+				Signal: clustermetadatapb.LifecycleSignal_LIFECYCLE_SIGNAL_SHUTTING_DOWN,
+			},
+		}
+		assert.True(t, LeaderNeedsReplacement(p))
+	})
+
+	t.Run("SHUTTING_DOWN with ACTIVE leadership returns false", func(t *testing.T) {
+		// Neither signal triggers replacement on its own:
+		// - SHUTTING_DOWN does not (announcement, not definitive)
+		// - ACTIVE does not (it means "still healthily leading")
+		p := poolerWithLeaderTerm(t, 5)
+		p.AvailabilityStatus = &clustermetadatapb.AvailabilityStatus{
+			LeadershipStatus: &clustermetadatapb.LeadershipStatus{
+				LeaderTerm: 5,
+				Signal:     clustermetadatapb.LeadershipSignal_LEADERSHIP_SIGNAL_ACTIVE,
+			},
+			LifecycleStatus: &clustermetadatapb.LifecycleStatus{
+				Signal: clustermetadatapb.LifecycleSignal_LIFECYCLE_SIGNAL_SHUTTING_DOWN,
+			},
+		}
+		assert.False(t, LeaderNeedsReplacement(p))
+	})
+}

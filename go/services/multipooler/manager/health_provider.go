@@ -71,6 +71,16 @@ type healthStreamer struct {
 	replicationLagNs atomic.Int64
 }
 
+func (hs *healthStreamer) withLock(callback func()) {
+	if hs == nil {
+		return
+	}
+
+	hs.mu.Lock()
+	defer hs.mu.Unlock()
+	callback()
+}
+
 // newHealthStreamer creates a new health streamer with the given identity.
 func newHealthStreamer(logger *slog.Logger, poolerID *clustermetadatapb.ID, tableGroup, shard string) *healthStreamer {
 	return &healthStreamer{
@@ -93,11 +103,10 @@ func (hs *healthStreamer) SetQueryServer(qs poolerserver.PoolerController) {
 // UpdateLeaderObservation updates the primary observation (term + primary ID)
 // and broadcasts to clients.
 func (hs *healthStreamer) UpdateLeaderObservation(obs *poolerserver.LeaderObservation) {
-	hs.mu.Lock()
-	defer hs.mu.Unlock()
-
-	hs.leaderObservation = obs
-	hs.broadcastLocked()
+	hs.withLock(func() {
+		hs.leaderObservation = obs
+		hs.broadcastLocked()
+	})
 }
 
 // OnStateChange updates both poolerType and servingStatus atomically with a single
@@ -114,22 +123,48 @@ func (hs *healthStreamer) OnStateChange(ctx context.Context, poolerType clusterm
 		hs.queryServer.AwaitStateChange(ctx, poolerType, servingStatus)
 	}
 
-	hs.mu.Lock()
-	defer hs.mu.Unlock()
-
-	hs.poolerType = poolerType
-	hs.servingStatus = servingStatus
-	hs.broadcastLocked()
+	hs.withLock(func() {
+		hs.poolerType = poolerType
+		hs.servingStatus = servingStatus
+		hs.broadcastLocked()
+	})
 	return nil
 }
 
 // Broadcast sends the current state to all clients without changing any state.
-// Used for periodic heartbeats.
+// Used for periodic heartbeats and for state-change announcements (e.g. the
+// SHUTTING_DOWN announcement during graceful shutdown). Subscriber channels
+// stay open after the broadcast; use Shutdown for the terminal close at the
+// end of graceful shutdown.
+//
+// Safe to call on a nil receiver (via withLock): tests and other constructors
+// that build a MultiPoolerManager without a healthStreamer can call broadcast
+// paths unconditionally without nil-checking at each call site.
 func (hs *healthStreamer) Broadcast() {
-	hs.mu.Lock()
-	defer hs.mu.Unlock()
+	hs.withLock(func() {
+		hs.broadcastLocked()
+	})
+}
 
-	hs.broadcastLocked()
+// Shutdown sends the current state to all clients and then closes every
+// subscriber channel. Subscribers' gRPC stream handlers observe the channel
+// close on `<-healthChan` and return, which lets servenv's
+// grpcServer.GracefulStop OnTermSync hook finish promptly instead of waiting
+// for the per-request stream contexts to be cancelled by force-stop.
+//
+// Use this only for the final terminal broadcast at the end of
+// GracefulShutdown. After Shutdown returns, the client map is empty;
+// subsequent Broadcast calls are a no-op.
+//
+// Safe to call on a nil receiver (via withLock).
+func (hs *healthStreamer) Shutdown() {
+	hs.withLock(func() {
+		hs.broadcastLocked()
+		for ch := range hs.clients {
+			close(ch)
+		}
+		hs.clients = make(map[chan *poolerserver.HealthState]struct{})
+	})
 }
 
 // SetReplicationLag updates the replication lag reported in the health stream.

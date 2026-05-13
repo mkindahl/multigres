@@ -26,6 +26,8 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	commonconsensus "github.com/multigres/multigres/go/common/consensus"
+	"github.com/multigres/multigres/go/common/constants"
 	"github.com/multigres/multigres/go/common/rpcclient"
 	"github.com/multigres/multigres/go/common/timeouts"
 	"github.com/multigres/multigres/go/common/topoclient"
@@ -49,10 +51,23 @@ const (
 type streamEntry struct {
 	cancel context.CancelFunc
 
-	// mu protects stream; set to the live gRPC stream after the start message
-	// is sent, and cleared on stream exit.
+	// mu protects stream and the shutdown-timer fields below. stream is set to
+	// the live gRPC stream after the start message is sent and cleared on
+	// stream exit.
 	mu     sync.Mutex
 	stream rpcclient.ManagerHealthStream
+
+	// shutdownTimer is armed when this pooler announces SHUTTING_DOWN and is
+	// cancelled on STOPPED, on stream EOF, or when the entry is torn down. On
+	// expiry the callback synthesizes a local STOPPED into the pooler's cached
+	// PoolerHealthState so failover proceeds via the analyzer's normal path
+	// even when the orchestrator has lost contact with the pooler.
+	shutdownTimer *time.Timer
+
+	// announcedDeadline is the (possibly clamped) deadline value that armed the
+	// timer. Used to detect duplicate SHUTTING_DOWN snapshots that announce a
+	// different deadline (a buggy or misconfigured pooler).
+	announcedDeadline time.Duration
 }
 
 // HealthStream maintains one ManagerHealthStream stream per pooler. It replaces
@@ -111,6 +126,54 @@ func WithStalenessTimeout(d time.Duration) Option {
 	}
 }
 
+func (entry *streamEntry) withLock(action func()) {
+	entry.mu.Lock()
+	defer entry.mu.Unlock()
+	action()
+}
+
+// armTimer arms the per-pooler shutdown deadline timer on the first
+// SHUTTING_DOWN announcement. On expiry the callback synthesizes a local
+// LIFECYCLE_SIGNAL_STOPPED into the cached PoolerHealthState so the analyzer
+// can fail over without contact with the pooler.
+//
+// On duplicate SHUTTING_DOWN announcements (timer already armed) the original
+// deadline is kept; if the duplicate announces a different value a warning is
+// logged (a buggy or misconfigured pooler signal). Identical re-announcements
+// are silent.
+//
+// Caller is expected to have already clamped deadline to MinShutdownDeadline.
+func (entry *streamEntry) armTimer(ctx context.Context, hs *HealthStream, poolerID string, deadline time.Duration) {
+	entry.withLock(func() {
+		if entry.shutdownTimer != nil {
+			if deadline != entry.announcedDeadline {
+				hs.logger.WarnContext(ctx, "duplicate SHUTTING_DOWN with mismatched deadline; keeping original",
+					"pooler_id", poolerID,
+					"original", entry.announcedDeadline,
+					"received", deadline)
+			}
+			return
+		}
+
+		entry.announcedDeadline = deadline
+		entry.shutdownTimer = time.AfterFunc(deadline, func() {
+			hs.onShutdownDeadlineExpired(poolerID, entry)
+		})
+		hs.logger.InfoContext(ctx, "armed shutdown deadline timer",
+			"pooler_id", poolerID,
+			"deadline", deadline)
+	})
+}
+
+func (entry *streamEntry) stopTimer() {
+	entry.withLock(func() {
+		if entry.shutdownTimer != nil {
+			entry.shutdownTimer.Stop()
+			entry.shutdownTimer = nil
+		}
+	})
+}
+
 // NewHealthStream creates a HealthStream.
 //
 // Call Start() for each pooler that should be monitored.
@@ -166,6 +229,11 @@ func (hs *HealthStream) Start(id *clustermetadatapb.ID) {
 			hs.mu.Lock()
 			delete(hs.streams, poolerID)
 			hs.mu.Unlock()
+
+			// Cancel any pending shutdown deadline timer; the stream is gone
+			// and the timer goroutine would otherwise still hold a reference to
+			// this entry past its useful lifetime.
+			entry.stopTimer()
 		}()
 		hs.runStream(ctx, poolerID, entry)
 	})
@@ -227,7 +295,39 @@ func (hs *HealthStream) runStream(ctx context.Context, poolerID string, entry *s
 				"error", streamErr,
 			)
 		}
+
+		// If the pooler announced graceful shutdown before the stream ended,
+		// stop trying to reconnect: it is intentionally going away. For a
+		// SHUTTING_DOWN pooler, also synthesize a local STOPPED so the analyzer
+		// can fail over without waiting for the deadline timer (the EOF is
+		// itself the strongest evidence the pooler has left).
+		switch hs.lastLifecycleSignal(poolerID) {
+		case clustermetadatapb.LifecycleSignal_LIFECYCLE_SIGNAL_SHUTTING_DOWN:
+			reason := "stream EOF after SHUTTING_DOWN"
+			entry.stopTimer()
+			hs.synthesizeShutdownStopped(poolerID, reason)
+			hs.synthesizeRequestingDemotion(poolerID, reason)
+			return
+		case clustermetadatapb.LifecycleSignal_LIFECYCLE_SIGNAL_STOPPED:
+			// Cache already shows STOPPED; no synthesis needed. Skip backoff.
+			reason := "stream EOF after STOPPED"
+			hs.synthesizeRequestingDemotion(poolerID, reason)
+			return
+		}
 	}
+}
+
+// lastLifecycleSignal returns the LifecycleSignal currently cached for a
+// pooler, or UNKNOWN if no AvailabilityStatus or LifecycleStatus is present.
+// Used to decide whether a stream EOF should trigger reconnect-with-backoff
+// (existing behaviour, no SHUTTING_DOWN/STOPPED in cache) or be treated as
+// the end of an intentional shutdown.
+func (hs *HealthStream) lastLifecycleSignal(poolerID string) clustermetadatapb.LifecycleSignal {
+	cached, ok := hs.store.Get(poolerID)
+	if !ok {
+		return clustermetadatapb.LifecycleSignal_LIFECYCLE_SIGNAL_UNKNOWN
+	}
+	return cached.GetAvailabilityStatus().GetLifecycleStatus().GetSignal()
 }
 
 // streamOnce opens one ManagerHealthStream and reads until the stream fails or
@@ -335,14 +435,8 @@ func (hs *HealthStream) streamOnce(ctx context.Context, poolerID string, poolerH
 	}
 
 	// Expose the live stream so Poll() can send requests.
-	entry.mu.Lock()
-	entry.stream = stream
-	entry.mu.Unlock()
-	defer func() {
-		entry.mu.Lock()
-		entry.stream = nil
-		entry.mu.Unlock()
-	}()
+	entry.withLock(func() { entry.stream = stream })
+	defer entry.withLock(func() { entry.stream = nil })
 
 	hs.markConnected(poolerID)
 
@@ -370,7 +464,7 @@ func (hs *HealthStream) streamOnce(ctx context.Context, poolerID string, poolerH
 			default:
 				// A reset is already pending; the watchdog will pick it up.
 			}
-			hs.applySnapshot(ctx, poolerID, poolerHealth, snap)
+			hs.applySnapshot(ctx, poolerID, poolerHealth, snap, entry)
 		}
 	}
 }
@@ -402,8 +496,13 @@ func (hs *HealthStream) Poll(id *clustermetadatapb.ID) error {
 }
 
 // applySnapshot writes health fields from a snapshot into the pooler store.
-// This mirrors the field writes performed by the old pollPooler function on success.
-func (hs *HealthStream) applySnapshot(ctx context.Context, poolerID string, poolerHealth *multiorchdatapb.PoolerHealthState, snapshot *multipoolermanagerdatapb.ManagerHealthSnapshot) {
+// This mirrors the field writes performed by the old pollPooler function on
+// success.
+//
+// After the cache write, applySnapshot inspects the just-arrived
+// LifecycleStatus and arms or cancels the per-pooler shutdown deadline timer
+// (entry.shutdownTimer). See handleLifecycleSnapshot for the rules.
+func (hs *HealthStream) applySnapshot(ctx context.Context, poolerID string, poolerHealth *multiorchdatapb.PoolerHealthState, snapshot *multipoolermanagerdatapb.ManagerHealthSnapshot, entry *streamEntry) {
 	if snapshot.Status == nil || snapshot.Status.Status == nil {
 		hs.logger.WarnContext(ctx, "received snapshot with nil status, skipping",
 			"pooler_id", poolerID)
@@ -441,12 +540,162 @@ func (hs *HealthStream) applySnapshot(ctx context.Context, poolerID string, pool
 
 	hs.store.DoUpdate(poolerIDStr, update)
 
+	hs.handleLifecycleSnapshot(ctx, poolerID, snapshot, entry)
+
 	hs.logger.DebugContext(ctx, "health snapshot applied",
 		"pooler_id", poolerID,
 		"pooler_type", status.PoolerType,
 		"postgres_ready", status.PostgresReady,
 		"postgres_running", status.PostgresRunning,
 	)
+}
+
+// handleLifecycleSnapshot arms or cancels the per-pooler shutdown deadline
+// timer based on the LifecycleStatus carried in the just-arrived snapshot.
+//
+// Behaviour:
+//
+//   - First SHUTTING_DOWN arrival: clamp shutdown_deadline to
+//     constants.MinShutdownDeadline (warn-log on clamp), arm
+//     time.AfterFunc(deadline, ...) which on expiry synthesizes a local
+//     LIFECYCLE_SIGNAL_STOPPED into the cached PoolerHealthState.
+//
+//   - Duplicate SHUTTING_DOWN arrival: leave the timer alone — the deadline
+//     is fixed at first announcement and shouldn't grow. Warn-log only when
+//     the announced deadline differs from the stored value (a buggy or
+//     misconfigured pooler signal); identical re-announcements are silent.
+//
+//   - STOPPED arrival: cancel the timer. The cache already shows STOPPED
+//     from the snapshot write above, so the analyzer will trigger failover
+//     on its next tick.
+//
+// All other lifecycle values (UNKNOWN, RUNNING, missing) are no-ops here.
+func (hs *HealthStream) handleLifecycleSnapshot(ctx context.Context, poolerID string, snapshot *multipoolermanagerdatapb.ManagerHealthSnapshot, entry *streamEntry) {
+	reason := "STOPPED snapshot received"
+	as := snapshot.GetStatus().GetAvailabilityStatus()
+	if as == nil || as.GetLifecycleStatus() == nil {
+		return
+	}
+	lc := as.GetLifecycleStatus()
+
+	switch lc.GetSignal() {
+	case clustermetadatapb.LifecycleSignal_LIFECYCLE_SIGNAL_SHUTTING_DOWN:
+		announced := lc.GetShutdownDeadline().AsDuration()
+		clamped := announced
+		if clamped < constants.MinShutdownDeadline {
+			hs.logger.WarnContext(ctx, "clamping out-of-band shutdown_deadline",
+				"pooler_id", poolerID,
+				"announced", announced,
+				"clamped_to", constants.MinShutdownDeadline)
+			clamped = constants.MinShutdownDeadline
+		}
+		entry.armTimer(ctx, hs, poolerID, clamped)
+
+	case clustermetadatapb.LifecycleSignal_LIFECYCLE_SIGNAL_STOPPED:
+		entry.stopTimer()
+		hs.synthesizeRequestingDemotion(poolerID, reason)
+	}
+}
+
+// onShutdownDeadlineExpired runs when the per-pooler shutdown deadline timer
+// fires without a STOPPED snapshot or stream EOF having cancelled it. It
+// synthesizes a local LIFECYCLE_SIGNAL_STOPPED into the cached
+// PoolerHealthState so the analyzer triggers failover on its next tick, and
+// cancels the stream context so we stop trying to read from a pooler that has
+// missed its own deadline.
+//
+// Idempotent: if the cache already reflects STOPPED (e.g. a STOPPED snapshot
+// raced past us), this is a no-op.
+func (hs *HealthStream) onShutdownDeadlineExpired(poolerID string, entry *streamEntry) {
+	cached, ok := hs.store.Get(poolerID)
+	if !ok {
+		return
+	}
+	if cached.GetAvailabilityStatus().GetLifecycleStatus().GetSignal() == clustermetadatapb.LifecycleSignal_LIFECYCLE_SIGNAL_STOPPED {
+		return
+	}
+	reason := "deadline expired without STOPPED"
+	hs.synthesizeShutdownStopped(poolerID, reason)
+	hs.synthesizeRequestingDemotion(poolerID, reason)
+	entry.cancel()
+}
+
+// synthesizeRequestingDemotion writes LeadershipSignal_REQUESTING_DEMOTION into
+// the pooler's cached AvailabilityStatus.LeadershipStatus, but only when the
+// pooler is the current topology primary (MultiPooler.Type == PRIMARY) and the
+// consensus primary_term is > 0. This is what drives LeaderNeedsReplacement to
+// fire failover after the orchestrator observes that a primary has stopped.
+//
+// Called from the three convergent shutdown-intent paths: STOPPED snapshot
+// received, stream EOF after SHUTTING_DOWN, and shutdown-deadline timer
+// expiry. For non-primary poolers it is a no-op:
+// only a leader's departure should request demotion. Idempotent across the
+// three paths (skips if the signal is already set for the current term).
+//
+// Captures the leader_term at observation time so LeaderNeedsReplacement's
+// staleness check (leader_term == consensus primary_term) passes when the
+// analyzer reads the cached state on its next tick.
+func (hs *HealthStream) synthesizeRequestingDemotion(poolerID, reason string) {
+	cached, ok := hs.store.Get(poolerID)
+	if !ok || cached.MultiPooler == nil {
+		return
+	}
+	if cached.MultiPooler.Type != clustermetadatapb.PoolerType_PRIMARY {
+		return
+	}
+	primaryTerm := commonconsensus.LeaderTerm(cached.GetConsensusStatus())
+	if primaryTerm <= 0 {
+		return
+	}
+	as := cached.GetAvailabilityStatus()
+	if ls := as.GetLeadershipStatus(); ls != nil &&
+		ls.Signal == clustermetadatapb.LeadershipSignal_LEADERSHIP_SIGNAL_REQUESTING_DEMOTION &&
+		ls.LeaderTerm == primaryTerm {
+		return
+	}
+
+	updateLeadership := func(existing *multiorchdatapb.PoolerHealthState) *multiorchdatapb.PoolerHealthState {
+		if existing.AvailabilityStatus == nil {
+			existing.AvailabilityStatus = &clustermetadatapb.AvailabilityStatus{}
+		}
+		existing.AvailabilityStatus.LeadershipStatus = &clustermetadatapb.LeadershipStatus{
+			Signal:     clustermetadatapb.LeadershipSignal_LEADERSHIP_SIGNAL_REQUESTING_DEMOTION,
+			LeaderTerm: primaryTerm,
+		}
+		return existing
+	}
+	hs.store.DoUpdate(poolerID, updateLeadership)
+	hs.logger.Info("synthesized REQUESTING_DEMOTION locally",
+		"pooler_id", poolerID,
+		"reason", reason,
+		"leader_term", primaryTerm)
+}
+
+// synthesizeShutdownStopped writes a local LIFECYCLE_SIGNAL_STOPPED into the
+// pooler's cached AvailabilityStatus. Used when the orchestrator has lost
+// contact with a pooler that previously announced SHUTTING_DOWN. The
+// synthesized STOPPED is observability-only — it makes the cached state
+// consistent with what the pooler would have published if its STOPPED
+// snapshot had arrived (e.g. for `multigres getpoolers` and EOF-vs-deadline
+// tests that inspect the cached lifecycle state). The failover trigger for
+// primaries is synthesizeRequestingDemotion, called alongside this helper
+// on the same shutdown-intent paths.
+//
+// This is purely local inference: nothing is sent on the wire.
+func (hs *HealthStream) synthesizeShutdownStopped(poolerID, reason string) {
+	cb := func(existing *multiorchdatapb.PoolerHealthState) *multiorchdatapb.PoolerHealthState {
+		if existing.AvailabilityStatus == nil {
+			existing.AvailabilityStatus = &clustermetadatapb.AvailabilityStatus{}
+		}
+		existing.AvailabilityStatus.LifecycleStatus = &clustermetadatapb.LifecycleStatus{
+			Signal: clustermetadatapb.LifecycleSignal_LIFECYCLE_SIGNAL_STOPPED,
+		}
+		return existing
+	}
+	hs.store.DoUpdate(poolerID, cb)
+	hs.logger.Info("synthesized LIFECYCLE_SIGNAL_STOPPED locally",
+		"pooler_id", poolerID,
+		"reason", reason)
 }
 
 // markConnected records that the stream is connected in the pooler store.
