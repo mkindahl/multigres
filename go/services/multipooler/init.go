@@ -58,6 +58,7 @@ type Multipooler struct {
 	pgBackRestCAFile           viperutil.Value[string]
 	pgBackRestPort             viperutil.Value[int]
 	backendVpidTrackingEnabled viperutil.Value[bool]
+	promotionTimeout           viperutil.Value[time.Duration]
 	// GrpcServer is the grpc server
 	grpcServer *servenv.GrpcServer
 	// Senv is the serving environment
@@ -159,6 +160,12 @@ func NewMultipooler(telemetry *telemetry.Telemetry) *Multipooler {
 			FlagName: "backend-vpid-tracking-enabled",
 			Dynamic:  false,
 		}),
+		promotionTimeout: viperutil.Configure(reg, "promotion-timeout", viperutil.Options[time.Duration]{
+			Default:  30 * time.Second,
+			FlagName: "promotion-timeout",
+			Dynamic:  false,
+			EnvVars:  []string{"MT_PROMOTION_TIMEOUT"},
+		}),
 		grpcServer:     servenv.NewGrpcServer(reg),
 		senv:           servenv.NewServEnvWithConfig(reg, servenv.NewLogger(reg, telemetry), viperutil.NewViperConfig(reg), telemetry),
 		telemetry:      telemetry,
@@ -195,6 +202,7 @@ func (mp *Multipooler) RegisterFlags(flags *pflag.FlagSet) {
 	flags.String("pgbackrest-ca-file", mp.pgBackRestCAFile.Default(), "TLS CA certificate for validating primary's pgBackRest server")
 	flags.Int("pgbackrest-port", mp.pgBackRestPort.Default(), "pgBackRest TLS server port")
 	flags.Bool("backend-vpid-tracking-enabled", mp.backendVpidTrackingEnabled.Default(), "Track active gateway virtual pid to PostgreSQL backend pid mappings in multigres.backend_vpid")
+	flags.Duration("promotion-timeout", mp.promotionTimeout.Default(), "max time to wait for a freshly promoted postgres to leave recovery and accept connections before giving up")
 
 	viperutil.BindFlags(flags,
 		mp.pgctldAddr,
@@ -212,6 +220,7 @@ func (mp *Multipooler) RegisterFlags(flags *pflag.FlagSet) {
 		mp.pgBackRestCAFile,
 		mp.pgBackRestPort,
 		mp.backendVpidTrackingEnabled,
+		mp.promotionTimeout,
 	)
 
 	mp.grpcServer.RegisterFlags(flags)
@@ -327,6 +336,7 @@ func (mp *Multipooler) Init(startCtx context.Context) error {
 		ConsensusEnabled:           mp.grpcServer.CheckServiceMap("consensus", mp.senv),
 		ConnPoolConfig:             mp.connPoolConfig,
 		BackendVpidTrackingEnabled: mp.backendVpidTrackingEnabled.Get(),
+		PromotionTimeout:           mp.promotionTimeout.Get(),
 		// pgBackRest TLS certificate paths for connecting to primary's pgBackRest server
 		PgBackRestCertFile: mp.pgBackRestCertFile.Get(),
 		PgBackRestKeyFile:  mp.pgBackRestKeyFile.Get(),

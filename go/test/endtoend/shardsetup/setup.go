@@ -113,6 +113,16 @@ func WithMultipoolerExtraArgs(args ...string) SetupOption {
 	}
 }
 
+// WithPromotionTimeout sets --promotion-timeout on every multipooler. Tests use
+// this to shrink the timeout well below a real promotion's duration so that an
+// ordinary promotion overruns it, deterministically exercising the
+// promotion-timeout path (e.g. shardsetup.WithPromotionTimeout("500ms")).
+func WithPromotionTimeout(d string) SetupOption {
+	return func(c *SetupConfig) {
+		c.MultipoolerExtraArgs = append(c.MultipoolerExtraArgs, "--promotion-timeout="+d)
+	}
+}
+
 // WithMultiorchCount sets the number of multiorch instances to create.
 // Default is 0.
 func WithMultiorchCount(count int) SetupOption {

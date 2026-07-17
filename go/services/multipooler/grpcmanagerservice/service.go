@@ -151,6 +151,11 @@ func (s *managerService) SetPostgresRestartsEnabled(ctx context.Context, req *mu
 	return s.manager.SetPostgresRestartsEnabled(ctx, req)
 }
 
+// SetParameters sets runtime-tunable manager parameters by name.
+func (s *managerService) SetParameters(ctx context.Context, req *multipoolermanagerdatapb.SetParametersRequest) (*multipoolermanagerdatapb.SetParametersResponse, error) {
+	return s.manager.SetParameters(ctx, req)
+}
+
 // ManagerHealthStream is the bidirectional health stream implementation.
 //
 // The orchestrator sends a start message (optionally carrying snapshot_interval

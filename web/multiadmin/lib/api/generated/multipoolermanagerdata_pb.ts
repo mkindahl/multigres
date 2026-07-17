@@ -2371,3 +2371,88 @@ export class SetPostgresRestartsEnabledResponse extends Message<SetPostgresResta
   }
 }
 
+/**
+ * SetParametersRequest sets runtime-tunable manager parameters by name. Values
+ * are strings parsed per-parameter. This is a generic control surface (used by
+ * tests and operators) so new tunables can be added without introducing a new
+ * RPC each time. Unknown keys are rejected with INVALID_ARGUMENT.
+ *
+ * Supported keys:
+ *   - "promotion_timeout": Go duration (e.g. "10ms", "30s") bounding how long
+ *     the pooler waits for a freshly promoted postgres to become ready. An
+ *     empty string or a value <= 0 restores the configured/default timeout.
+ *
+ * @generated from message multipoolermanagerdata.SetParametersRequest
+ */
+export class SetParametersRequest extends Message<SetParametersRequest> {
+  /**
+   * Parameter name -> value. See the message comment for supported keys.
+   *
+   * @generated from field: map<string, string> parameters = 1;
+   */
+  parameters: { [key: string]: string } = {};
+
+  constructor(data?: PartialMessage<SetParametersRequest>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "multipoolermanagerdata.SetParametersRequest";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "parameters", kind: "map", K: 9 /* ScalarType.STRING */, V: {kind: "scalar", T: 9 /* ScalarType.STRING */} },
+  ]);
+
+  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): SetParametersRequest {
+    return new SetParametersRequest().fromBinary(bytes, options);
+  }
+
+  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): SetParametersRequest {
+    return new SetParametersRequest().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(jsonString: string, options?: Partial<JsonReadOptions>): SetParametersRequest {
+    return new SetParametersRequest().fromJsonString(jsonString, options);
+  }
+
+  static equals(a: SetParametersRequest | PlainMessage<SetParametersRequest> | undefined, b: SetParametersRequest | PlainMessage<SetParametersRequest> | undefined): boolean {
+    return proto3.util.equals(SetParametersRequest, a, b);
+  }
+}
+
+/**
+ * SetParametersResponse confirms the parameters were applied.
+ * Errors are returned via gRPC status codes, not in the response body.
+ *
+ * Empty - success indicated by no error
+ *
+ * @generated from message multipoolermanagerdata.SetParametersResponse
+ */
+export class SetParametersResponse extends Message<SetParametersResponse> {
+  constructor(data?: PartialMessage<SetParametersResponse>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "multipoolermanagerdata.SetParametersResponse";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+  ]);
+
+  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): SetParametersResponse {
+    return new SetParametersResponse().fromBinary(bytes, options);
+  }
+
+  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): SetParametersResponse {
+    return new SetParametersResponse().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(jsonString: string, options?: Partial<JsonReadOptions>): SetParametersResponse {
+    return new SetParametersResponse().fromJsonString(jsonString, options);
+  }
+
+  static equals(a: SetParametersResponse | PlainMessage<SetParametersResponse> | undefined, b: SetParametersResponse | PlainMessage<SetParametersResponse> | undefined): boolean {
+    return proto3.util.equals(SetParametersResponse, a, b);
+  }
+}
+

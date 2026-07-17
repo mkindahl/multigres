@@ -611,3 +611,23 @@ message SetPostgresRestartsEnabledRequest {
 message SetPostgresRestartsEnabledResponse {
   // Empty - success indicated by no error
 }
+
+// SetParametersRequest sets runtime-tunable manager parameters by name. Values
+// are strings parsed per-parameter. This is a generic control surface (used by
+// tests and operators) so new tunables can be added without introducing a new
+// RPC each time. Unknown keys are rejected with INVALID_ARGUMENT.
+//
+// Supported keys:
+//   - "promotion_timeout": Go duration (e.g. "10ms", "30s") bounding how long
+//     the pooler waits for a freshly promoted postgres to become ready. An
+//     empty string or a value <= 0 restores the configured/default timeout.
+message SetParametersRequest {
+  // Parameter name -> value. See the message comment for supported keys.
+  map<string, string> parameters = 1;
+}
+
+// SetParametersResponse confirms the parameters were applied.
+// Errors are returned via gRPC status codes, not in the response body.
+message SetParametersResponse {
+  // Empty - success indicated by no error
+}

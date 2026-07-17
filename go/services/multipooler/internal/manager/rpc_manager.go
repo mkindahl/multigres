@@ -877,6 +877,52 @@ func (pm *MultipoolerManager) SetPostgresRestartsEnabled(ctx context.Context, re
 	return &multipoolermanagerdatapb.SetPostgresRestartsEnabledResponse{}, nil
 }
 
+// Runtime-tunable parameter names accepted by SetParameters. Keep this the
+// single source of truth for supported keys; add a case in SetParameters when
+// adding a new one.
+const (
+	// paramPromotionTimeout bounds waitForPromotionComplete. Value is a Go
+	// duration string (e.g. "10ms"); "" or a non-positive value restores the
+	// configured/default timeout.
+	paramPromotionTimeout = "promotion_timeout"
+)
+
+// SetParameters sets runtime-tunable manager parameters by name. It is a generic
+// control surface so new tunables can be added without a new RPC — extend the
+// switch below. Unknown keys are rejected with INVALID_ARGUMENT and no
+// parameter in the request is applied partially past the first error.
+func (pm *MultipoolerManager) SetParameters(ctx context.Context, req *multipoolermanagerdatapb.SetParametersRequest) (*multipoolermanagerdatapb.SetParametersResponse, error) {
+	for name, value := range req.GetParameters() {
+		switch name {
+		case paramPromotionTimeout:
+			d, err := parseDurationParam(value)
+			if err != nil {
+				return nil, mterrors.Errorf(mtrpcpb.Code_INVALID_ARGUMENT,
+					"parameter %q: %v", name, err)
+			}
+			if d <= 0 {
+				pm.promotionTimeoutOverrideNs.Store(0)
+			} else {
+				pm.promotionTimeoutOverrideNs.Store(int64(d))
+			}
+		default:
+			return nil, mterrors.Errorf(mtrpcpb.Code_INVALID_ARGUMENT,
+				"unknown parameter %q", name)
+		}
+		pm.logger.InfoContext(ctx, "SetParameters applied parameter", "name", name, "value", value)
+	}
+	return &multipoolermanagerdatapb.SetParametersResponse{}, nil
+}
+
+// parseDurationParam parses a parameter value as a Go duration. An empty string
+// means "reset to default" and returns 0.
+func parseDurationParam(value string) (time.Duration, error) {
+	if value == "" {
+		return 0, nil
+	}
+	return time.ParseDuration(value)
+}
+
 // ====================================================================================
 // Helper methods for stale-primary demotion (used by SetPrimary)
 // ====================================================================================

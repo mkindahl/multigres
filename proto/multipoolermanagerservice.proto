@@ -84,6 +84,13 @@ service MultipoolerManager {
   rpc SetPostgresRestartsEnabled(multipoolermanagerdata.SetPostgresRestartsEnabledRequest)
       returns (multipoolermanagerdata.SetPostgresRestartsEnabledResponse);
 
+  // SetParameters sets runtime-tunable manager parameters by name (a generic
+  // control surface so new tunables need no new RPC). Used, for example, to
+  // keep a high promotion timeout during bootstrap and lower it before a
+  // controlled failover.
+  rpc SetParameters(multipoolermanagerdata.SetParametersRequest)
+      returns (multipoolermanagerdata.SetParametersResponse);
+
   // ManagerHealthStream is a bidirectional health stream between orchestrator
   // and pooler.
   //

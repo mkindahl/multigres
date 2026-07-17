@@ -165,6 +165,12 @@ type MultipoolerManager struct {
 	// False by default (restarts enabled); tests and demos set it during controlled failovers.
 	postgresRestartsDisabled atomic.Bool
 
+	// promotionTimeoutOverrideNs, when >0, overrides Config.PromotionTimeout at
+	// runtime (see waitForPromotionComplete). Set via the SetPromotionTimeout
+	// RPC so tests can keep a high bootstrap timeout and then lower it before a
+	// controlled failover. 0 means "use the configured/default value".
+	promotionTimeoutOverrideNs atomic.Int64
+
 	// walReceiverManuallyStopped is set by StopReplication when it clears
 	// primary_conninfo (RECEIVER_ONLY / REPLAY_AND_RECEIVER modes). It tells
 	// the postgres monitor not to "self-heal" the cleared conninfo back to
@@ -1475,11 +1481,21 @@ func (pm *MultipoolerManager) dropUnloggedTablesAfterPromotion(ctx context.Conte
 // confirms the WAL-level promotion, and postgres_ready=true confirms clients can
 // connect. Clearing promotionInProgress only when both are true ensures multiorch's
 // PrimaryIsDeadAnalyzer suppression window matches the full visibility gap.
+// defaultPromotionTimeout is used when Config.PromotionTimeout is unset (0).
+const defaultPromotionTimeout = 30 * time.Second
+
 func (pm *MultipoolerManager) waitForPromotionComplete(ctx context.Context) error {
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 
-	promotionTimeout := 30 * time.Second
+	promotionTimeout := pm.config.PromotionTimeout
+	if promotionTimeout == 0 {
+		promotionTimeout = defaultPromotionTimeout
+	}
+	// A runtime override (SetPromotionTimeout RPC) takes precedence when set.
+	if override := pm.promotionTimeoutOverrideNs.Load(); override > 0 {
+		promotionTimeout = time.Duration(override)
+	}
 	promotionCtx, cancel := context.WithTimeout(ctx, promotionTimeout)
 	defer cancel()
 

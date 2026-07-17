@@ -43,6 +43,11 @@ type MockPgCtldService struct {
 	PgRewindCalls           []*pb.PgRewindRequest
 	StopRestoreCommandCalls []*pb.StopRestoreCommandRequest
 
+	// StatusFunc, when set, computes the Status response dynamically (e.g. to
+	// simulate a node that only becomes ready after N polls). Takes precedence
+	// over StatusResponse / StatusError.
+	StatusFunc func(*pb.StatusRequest) (*pb.StatusResponse, error)
+
 	// Response configurations
 	StartResponse              *pb.StartResponse
 	StopResponse               *pb.StopResponse
@@ -135,6 +140,9 @@ func (m *MockPgCtldService) Status(ctx context.Context, req *pb.StatusRequest) (
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.StatusCalls = append(m.StatusCalls, req)
+	if m.StatusFunc != nil {
+		return m.StatusFunc(req)
+	}
 	if m.StatusError != nil {
 		return nil, m.StatusError
 	}

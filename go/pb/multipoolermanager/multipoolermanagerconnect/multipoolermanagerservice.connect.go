@@ -78,6 +78,9 @@ const (
 	// MultipoolerManagerSetPostgresRestartsEnabledProcedure is the fully-qualified name of the
 	// MultipoolerManager's SetPostgresRestartsEnabled RPC.
 	MultipoolerManagerSetPostgresRestartsEnabledProcedure = "/multipoolermanager.MultipoolerManager/SetPostgresRestartsEnabled"
+	// MultipoolerManagerSetParametersProcedure is the fully-qualified name of the MultipoolerManager's
+	// SetParameters RPC.
+	MultipoolerManagerSetParametersProcedure = "/multipoolermanager.MultipoolerManager/SetParameters"
 	// MultipoolerManagerManagerHealthStreamProcedure is the fully-qualified name of the
 	// MultipoolerManager's ManagerHealthStream RPC.
 	MultipoolerManagerManagerHealthStreamProcedure = "/multipoolermanager.MultipoolerManager/ManagerHealthStream"
@@ -112,6 +115,11 @@ type MultipoolerManagerClient interface {
 	// PostgreSQL instance. Used by tests and demos to prevent premature restarts during
 	// controlled failovers.
 	SetPostgresRestartsEnabled(context.Context, *connect.Request[multipoolermanagerdata.SetPostgresRestartsEnabledRequest]) (*connect.Response[multipoolermanagerdata.SetPostgresRestartsEnabledResponse], error)
+	// SetParameters sets runtime-tunable manager parameters by name (a generic
+	// control surface so new tunables need no new RPC). Used, for example, to
+	// keep a high promotion timeout during bootstrap and lower it before a
+	// controlled failover.
+	SetParameters(context.Context, *connect.Request[multipoolermanagerdata.SetParametersRequest]) (*connect.Response[multipoolermanagerdata.SetParametersResponse], error)
 	// ManagerHealthStream is a bidirectional health stream between orchestrator
 	// and pooler.
 	//
@@ -200,6 +208,12 @@ func NewMultipoolerManagerClient(httpClient connect.HTTPClient, baseURL string, 
 			connect.WithSchema(multipoolerManagerMethods.ByName("SetPostgresRestartsEnabled")),
 			connect.WithClientOptions(opts...),
 		),
+		setParameters: connect.NewClient[multipoolermanagerdata.SetParametersRequest, multipoolermanagerdata.SetParametersResponse](
+			httpClient,
+			baseURL+MultipoolerManagerSetParametersProcedure,
+			connect.WithSchema(multipoolerManagerMethods.ByName("SetParameters")),
+			connect.WithClientOptions(opts...),
+		),
 		managerHealthStream: connect.NewClient[multipoolermanagerdata.ManagerHealthStreamClientMessage, multipoolermanagerdata.ManagerHealthStreamResponse](
 			httpClient,
 			baseURL+MultipoolerManagerManagerHealthStreamProcedure,
@@ -221,6 +235,7 @@ type multipoolerManagerClient struct {
 	expireBackups              *connect.Client[multipoolermanagerdata.ExpireBackupsRequest, multipoolermanagerdata.ExpireBackupsResponse]
 	verifyBackups              *connect.Client[multipoolermanagerdata.VerifyBackupsRequest, multipoolermanagerdata.VerifyBackupsResponse]
 	setPostgresRestartsEnabled *connect.Client[multipoolermanagerdata.SetPostgresRestartsEnabledRequest, multipoolermanagerdata.SetPostgresRestartsEnabledResponse]
+	setParameters              *connect.Client[multipoolermanagerdata.SetParametersRequest, multipoolermanagerdata.SetParametersResponse]
 	managerHealthStream        *connect.Client[multipoolermanagerdata.ManagerHealthStreamClientMessage, multipoolermanagerdata.ManagerHealthStreamResponse]
 }
 
@@ -275,6 +290,11 @@ func (c *multipoolerManagerClient) SetPostgresRestartsEnabled(ctx context.Contex
 	return c.setPostgresRestartsEnabled.CallUnary(ctx, req)
 }
 
+// SetParameters calls multipoolermanager.MultipoolerManager.SetParameters.
+func (c *multipoolerManagerClient) SetParameters(ctx context.Context, req *connect.Request[multipoolermanagerdata.SetParametersRequest]) (*connect.Response[multipoolermanagerdata.SetParametersResponse], error) {
+	return c.setParameters.CallUnary(ctx, req)
+}
+
 // ManagerHealthStream calls multipoolermanager.MultipoolerManager.ManagerHealthStream.
 func (c *multipoolerManagerClient) ManagerHealthStream(ctx context.Context) *connect.BidiStreamForClient[multipoolermanagerdata.ManagerHealthStreamClientMessage, multipoolermanagerdata.ManagerHealthStreamResponse] {
 	return c.managerHealthStream.CallBidiStream(ctx)
@@ -310,6 +330,11 @@ type MultipoolerManagerHandler interface {
 	// PostgreSQL instance. Used by tests and demos to prevent premature restarts during
 	// controlled failovers.
 	SetPostgresRestartsEnabled(context.Context, *connect.Request[multipoolermanagerdata.SetPostgresRestartsEnabledRequest]) (*connect.Response[multipoolermanagerdata.SetPostgresRestartsEnabledResponse], error)
+	// SetParameters sets runtime-tunable manager parameters by name (a generic
+	// control surface so new tunables need no new RPC). Used, for example, to
+	// keep a high promotion timeout during bootstrap and lower it before a
+	// controlled failover.
+	SetParameters(context.Context, *connect.Request[multipoolermanagerdata.SetParametersRequest]) (*connect.Response[multipoolermanagerdata.SetParametersResponse], error)
 	// ManagerHealthStream is a bidirectional health stream between orchestrator
 	// and pooler.
 	//
@@ -394,6 +419,12 @@ func NewMultipoolerManagerHandler(svc MultipoolerManagerHandler, opts ...connect
 		connect.WithSchema(multipoolerManagerMethods.ByName("SetPostgresRestartsEnabled")),
 		connect.WithHandlerOptions(opts...),
 	)
+	multipoolerManagerSetParametersHandler := connect.NewUnaryHandler(
+		MultipoolerManagerSetParametersProcedure,
+		svc.SetParameters,
+		connect.WithSchema(multipoolerManagerMethods.ByName("SetParameters")),
+		connect.WithHandlerOptions(opts...),
+	)
 	multipoolerManagerManagerHealthStreamHandler := connect.NewBidiStreamHandler(
 		MultipoolerManagerManagerHealthStreamProcedure,
 		svc.ManagerHealthStream,
@@ -422,6 +453,8 @@ func NewMultipoolerManagerHandler(svc MultipoolerManagerHandler, opts ...connect
 			multipoolerManagerVerifyBackupsHandler.ServeHTTP(w, r)
 		case MultipoolerManagerSetPostgresRestartsEnabledProcedure:
 			multipoolerManagerSetPostgresRestartsEnabledHandler.ServeHTTP(w, r)
+		case MultipoolerManagerSetParametersProcedure:
+			multipoolerManagerSetParametersHandler.ServeHTTP(w, r)
 		case MultipoolerManagerManagerHealthStreamProcedure:
 			multipoolerManagerManagerHealthStreamHandler.ServeHTTP(w, r)
 		default:
@@ -471,6 +504,10 @@ func (UnimplementedMultipoolerManagerHandler) VerifyBackups(context.Context, *co
 
 func (UnimplementedMultipoolerManagerHandler) SetPostgresRestartsEnabled(context.Context, *connect.Request[multipoolermanagerdata.SetPostgresRestartsEnabledRequest]) (*connect.Response[multipoolermanagerdata.SetPostgresRestartsEnabledResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("multipoolermanager.MultipoolerManager.SetPostgresRestartsEnabled is not implemented"))
+}
+
+func (UnimplementedMultipoolerManagerHandler) SetParameters(context.Context, *connect.Request[multipoolermanagerdata.SetParametersRequest]) (*connect.Response[multipoolermanagerdata.SetParametersResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("multipoolermanager.MultipoolerManager.SetParameters is not implemented"))
 }
 
 func (UnimplementedMultipoolerManagerHandler) ManagerHealthStream(context.Context, *connect.BidiStream[multipoolermanagerdata.ManagerHealthStreamClientMessage, multipoolermanagerdata.ManagerHealthStreamResponse]) error {

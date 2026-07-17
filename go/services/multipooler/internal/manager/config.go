@@ -16,6 +16,8 @@
 package manager
 
 import (
+	"time"
+
 	"github.com/multigres/multigres/go/common/topoclient"
 	"github.com/multigres/multigres/go/services/multipooler/internal/connpoolmanager"
 )
@@ -29,6 +31,13 @@ type Config struct {
 	ConsensusEnabled           bool                    // Whether consensus gRPC service is enabled
 	ConnPoolConfig             *connpoolmanager.Config // Connection pool config (manager created in MultipoolerManager)
 	BackendVpidTrackingEnabled bool                    // Whether to write active gateway-vpid/backend-pid mappings
+
+	// PromotionTimeout bounds how long waitForPromotionComplete waits for a
+	// freshly promoted postgres to leave recovery and accept connections.
+	// Zero means use the default (defaultPromotionTimeout). Exposed as a flag
+	// so tests can shrink it well below a real promotion's duration to
+	// deterministically exercise the promotion-timeout path.
+	PromotionTimeout time.Duration
 
 	// pgBackRest TLS certificate paths for connecting to primary's pgBackRest server
 	PgBackRestCertFile string // TLS client certificate file path
