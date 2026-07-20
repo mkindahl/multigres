@@ -17,8 +17,6 @@ package command
 import (
 	"fmt"
 	"log/slog"
-	"os"
-	"path/filepath"
 
 	"github.com/multigres/multigres/go/services/pgctld"
 	"github.com/multigres/multigres/go/tools/viperutil"
@@ -119,17 +117,9 @@ func RestartPostgreSQLWithResult(logger *slog.Logger, config *pgctld.PostgresCtl
 		result.StoppedFirst = false
 	}
 
-	// Create standby.signal if restarting as standby
-	if asStandby {
-		standbySignalPath := filepath.Join(config.PostgresDataDir, "standby.signal")
-		logger.Info("Creating standby.signal file", "path", standbySignalPath)
-		if err := os.WriteFile(standbySignalPath, []byte(""), 0o644); err != nil {
-			return nil, fmt.Errorf("failed to create standby.signal: %w", err)
-		}
-		logger.Info("standby.signal created successfully", "path", standbySignalPath)
-	}
-
-	// Start the server with detailed context
+	// Start the server with detailed context. StartPostgreSQLWithResult creates or
+	// removes standby.signal to match asStandby, so the desired mode is reached
+	// idempotently regardless of what the previous run left behind.
 	if asStandby {
 		logger.Info("Starting PostgreSQL server as standby",
 			"data_dir", config.PostgresDataDir,
@@ -140,7 +130,7 @@ func RestartPostgreSQLWithResult(logger *slog.Logger, config *pgctld.PostgresCtl
 		logger.Info("Starting PostgreSQL server")
 	}
 
-	startResult, err := StartPostgreSQLWithResult(logger, config)
+	startResult, err := StartPostgreSQLWithResult(logger, config, asStandby)
 	if err != nil {
 		// Enhanced error logging for standby mode
 		if asStandby {

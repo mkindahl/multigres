@@ -336,6 +336,7 @@ type mockPgctldClient struct {
 	statusResponse *pgctldpb.StatusResponse
 	statusError    error
 	startCalled    bool
+	startAsStandby bool
 	startError     error
 	restartCalled  bool
 	restartError   error
@@ -355,6 +356,8 @@ func (m *mockPgctldClient) Status(ctx context.Context, req *pgctldpb.StatusReque
 
 func (m *mockPgctldClient) Start(ctx context.Context, req *pgctldpb.StartRequest, opts ...grpc.CallOption) (*pgctldpb.StartResponse, error) {
 	m.startCalled = true
+	// AsStandby is optional; unset means standby, same as an explicit true.
+	m.startAsStandby = req.AsStandby == nil || req.GetAsStandby()
 	if m.startError != nil {
 		return nil, m.startError
 	}

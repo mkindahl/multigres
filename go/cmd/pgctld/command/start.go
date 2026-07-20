@@ -112,7 +112,7 @@ func (s *PgCtlStartCmd) runStart(cmd *cobra.Command, args []string) error {
 	}
 	config.Password = password
 
-	result, err := StartPostgreSQLWithResult(s.pgCtlCmd.lg.GetLogger(), config)
+	result, err := StartPostgreSQLWithResult(s.pgCtlCmd.lg.GetLogger(), config, false)
 	if err != nil {
 		return err
 	}
@@ -127,8 +127,46 @@ func (s *PgCtlStartCmd) runStart(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// StartPostgreSQLWithResult starts PostgreSQL with the given configuration and returns detailed result information
-func StartPostgreSQLWithResult(logger *slog.Logger, config *pgctld.PostgresCtlConfig) (*StartResult, error) {
+// writeStandbySignal creates an empty standby.signal file in the data directory
+// so that PostgreSQL comes up in recovery (standby) mode instead of as a
+// writable primary. Used by both the start-as-standby and restart-as-standby
+// paths. A no-op if the file already exists.
+func writeStandbySignal(logger *slog.Logger, dataDir string) error {
+	standbySignalPath := filepath.Join(dataDir, "standby.signal")
+	if _, err := os.Stat(standbySignalPath); err == nil {
+		logger.Info("standby.signal already exists, skipping", "path", standbySignalPath)
+		return nil
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("failed to stat standby.signal: %w", err)
+	}
+
+	logger.Info("Creating standby.signal file", "path", standbySignalPath)
+	if err := os.WriteFile(standbySignalPath, []byte(""), 0o644); err != nil {
+		return fmt.Errorf("failed to create standby.signal: %w", err)
+	}
+	logger.Info("standby.signal created successfully", "path", standbySignalPath)
+	return nil
+}
+
+// removeStandbySignal removes standby.signal from the data directory so that
+// PostgreSQL starts as a writable primary instead of recovering as a standby.
+// A no-op if the file does not exist.
+func removeStandbySignal(logger *slog.Logger, dataDir string) error {
+	standbySignalPath := filepath.Join(dataDir, "standby.signal")
+	if err := os.Remove(standbySignalPath); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to remove standby.signal: %w", err)
+	}
+	logger.Info("standby.signal removed successfully", "path", standbySignalPath)
+	return nil
+}
+
+// StartPostgreSQLWithResult starts PostgreSQL with the given configuration and returns detailed result information.
+// standby.signal is created or removed to match asStandby before start, so postgres always comes up in the
+// requested mode regardless of what a previous run left behind.
+func StartPostgreSQLWithResult(logger *slog.Logger, config *pgctld.PostgresCtlConfig, asStandby bool) (*StartResult, error) {
 	result := &StartResult{}
 
 	// Check if PostgreSQL is already running
@@ -160,8 +198,20 @@ func StartPostgreSQLWithResult(logger *slog.Logger, config *pgctld.PostgresCtlCo
 		return nil, fmt.Errorf("PGDATA permission check failed: %w", err)
 	}
 
+	// Create or remove standby.signal to match the requested mode: present means
+	// postgres comes up in recovery (standby); absent means writable primary.
+	if asStandby {
+		if err := writeStandbySignal(logger, config.PostgresDataDir); err != nil {
+			return nil, err
+		}
+	} else {
+		if err := removeStandbySignal(logger, config.PostgresDataDir); err != nil {
+			return nil, err
+		}
+	}
+
 	// Start PostgreSQL
-	logger.Info("Starting PostgreSQL server", "data_dir", config.PostgresDataDir)
+	logger.Info("Starting PostgreSQL server", "data_dir", config.PostgresDataDir, "as_standby", asStandby)
 	if err := startPostgreSQLWithConfig(logger, config); err != nil {
 		return nil, fmt.Errorf("failed to start PostgreSQL: %w", err)
 	}
@@ -184,7 +234,7 @@ func StartPostgreSQLWithResult(logger *slog.Logger, config *pgctld.PostgresCtlCo
 
 // StartPostgreSQLWithConfig starts PostgreSQL with the given configuration
 func StartPostgreSQLWithConfig(logger *slog.Logger, config *pgctld.PostgresCtlConfig) error {
-	result, err := StartPostgreSQLWithResult(logger, config)
+	result, err := StartPostgreSQLWithResult(logger, config, false)
 	if err != nil {
 		return err
 	}

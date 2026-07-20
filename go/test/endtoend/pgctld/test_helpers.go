@@ -301,8 +301,9 @@ func initAndStartPostgreSQL(t *testing.T, client pgctldservice.PgCtldClient) {
 	_, err := client.InitDataDir(ctx, &pgctldservice.InitDataDirRequest{})
 	require.NoError(t, err, "InitDataDir should succeed")
 
-	// Start PostgreSQL
-	_, err = client.Start(ctx, &pgctldservice.StartRequest{})
+	// Start PostgreSQL as a writable primary; this helper is for generic tests
+	// that expect a plain running instance, not standby/replication scenarios.
+	_, err = client.Start(ctx, &pgctldservice.StartRequest{AsStandby: new(false)})
 	require.NoError(t, err, "Start should succeed")
 
 	// Wait for PostgreSQL to be ready

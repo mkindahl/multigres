@@ -60,8 +60,11 @@ func bumpPostgresMaxConnections(ctx context.Context, t *testing.T, setup *shards
 			t.Fatalf("connect to pgctld on %s: %v", name, err)
 		}
 
+		// This restarts a running writable primary to apply the config change, not
+		// a standby/replication scenario, so AsStandby must be explicit false —
+		// the request defaults to standby when unset.
 		restartCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
-		_, err = pg.Restart(restartCtx, &pgctldpb.RestartRequest{Mode: "fast"})
+		_, err = pg.Restart(restartCtx, &pgctldpb.RestartRequest{Mode: "fast", AsStandby: new(false)})
 		cancel()
 		pg.Close()
 		if err != nil {

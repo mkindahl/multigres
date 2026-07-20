@@ -137,8 +137,18 @@ func (pm *MultipoolerManager) createFirstBackupAndInitializeLocked(ctx context.C
 		return false, false, mterrors.Wrap(err, "failed to configure archive mode")
 	}
 
-	// Start PostgreSQL.
-	if _, err := pm.pgctldClient.Start(ctx, &pgctldpb.StartRequest{}); err != nil {
+	// Start PostgreSQL as a writable primary (AsStandby is explicitly false;
+	// the request defaults to standby when unset). Unlike the monitor's restart
+	// path, this one-time bootstrap of a brand-new shard (coordinator term 0,
+	// before any other primary can exist) needs a writable primary for the
+	// DDL/DML below (createSidecarSchema, initializeMultischemaData) and the
+	// first backup. There is no split-brain window: no other primary exists
+	// yet, and the deferred cleanup above stops postgres and removes this data
+	// directory before any other pooler restores from the shared backup.
+	// Starting from a fresh initdb also keeps pg_control's GUCs consistent with
+	// a writable start, avoiding the recovery-mode GUC lower-bound checks that a
+	// fresh standby start would hit.
+	if _, err := pm.pgctldClient.Start(ctx, &pgctldpb.StartRequest{AsStandby: new(false)}); err != nil {
 		return false, false, mterrors.Wrap(err, "failed to start PostgreSQL")
 	}
 

@@ -53,9 +53,10 @@ func InitAndStartPostgreSQL(t *testing.T, grpcAddr string) error {
 	}
 	t.Logf("Init response: %s", initResp.Message)
 
-	// Start PostgreSQL
+	// Start PostgreSQL as a writable primary; this helper is for generic tests
+	// that expect a plain running instance, not standby/replication scenarios.
 	t.Logf("Starting PostgreSQL via gRPC at %s", grpcAddr)
-	startResp, err := client.Start(ctx, &pb.StartRequest{})
+	startResp, err := client.Start(ctx, &pb.StartRequest{AsStandby: new(false)})
 	if err != nil {
 		return fmt.Errorf("call to Start RPC failed: %w", err)
 	}
@@ -110,9 +111,10 @@ func StartPostgreSQL(t *testing.T, grpcAddr string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// Start PostgreSQL
+	// Start PostgreSQL as a writable primary; this helper is for generic tests
+	// that expect a plain running instance, not standby/replication scenarios.
 	t.Logf("Starting PostgreSQL via gRPC at %s", grpcAddr)
-	startResp, err := client.Start(ctx, &pb.StartRequest{})
+	startResp, err := client.Start(ctx, &pb.StartRequest{AsStandby: new(false)})
 	if err != nil {
 		return fmt.Errorf("call to Start RPC failed: %w", err)
 	}

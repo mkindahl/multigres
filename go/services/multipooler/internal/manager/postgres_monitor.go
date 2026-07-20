@@ -862,35 +862,49 @@ func (pm *MultipoolerManager) hasCompleteBackups(ctx context.Context) (bool, err
 	return false, nil
 }
 
-// startPostgres starts PostgreSQL via pgctld
+// startPostgres starts PostgreSQL via pgctld, always in standby (recovery) mode.
 //
-// TODO: preemptive-rewind safety. A monitor-driven restart can't know what
-// happened between the previous run and now — postgres may have crashed
-// mid-write as primary, or may have been killed externally. The safe default
-// is to come back as a standby with suspectedDivergence=true so that the next
-// SetPrimary/Promote/standby-conninfo path routes through demoteStalePrimaryLocked
-// (which runs pg_rewind dry-run; cheap when there's no divergence) before
-// trusting local WAL. This bears on the broader self-rewind plan:
-//   - replicas with phantom transactions: orch sends an explicit
-//     RewindToSource RPC today; a future change should let the local monitor
-//     detect stuck replication and self-heal without needing orch in the loop.
-//   - primaries demoted unexpectedly (crash, SIGKILL, external pg_demote):
-//     the restart-as-standby helper should require callers to declare
-//     "clean" vs "unexpected" so an unexpected transition can set
-//     suspectedDivergence up front, increasing the odds of fast convergence once
-//     a new leader is announced.
+// A monitor-driven restart can't know what happened between the previous run
+// and now — postgres may have crashed mid-write as a primary, or been killed
+// externally. Coming back up as a writable primary here is unsafe: if a new
+// leader was meanwhile elected and this node cannot reach it, we would have two
+// writable servers (split-brain). So we always come up as a standby and never
+// serve writes on our own; promotion back to a writable primary happens only
+// through the consensus-gated Promote RPC (pg_promote), which requires postgres
+// to be in recovery — a state this guarantees.
+//
+// We also set suspectedDivergence so that re-establishing replication to the
+// current leader routes through pg_rewind (cheap dry-run when there's no
+// divergence) before trusting local WAL.
+//
+// TODO(self-rewind): a former primary that comes up here as a standby and finds
+// its WAL diverged from the current leader currently relies on orch's
+// RewindToSource RPC to run pg_rewind (see the self-rewind TODO in
+// determineReplicationSettingsAction); until the monitor self-detects stuck
+// replication, such a node stays a safe read-only standby (no split-brain)
+// until orch rewinds it.
 func (pm *MultipoolerManager) startPostgres(ctx context.Context) error {
-	pm.logger.InfoContext(ctx, "MonitorPostgres: Attempting to restart PostgreSQL")
+	pm.logger.InfoContext(ctx, "MonitorPostgres: Attempting to start PostgreSQL as standby")
 	if pm.pgctldClient == nil {
 		return errors.New("pgctld client not available")
 	}
 
-	_, err := pm.pgctldClient.Start(ctx, &pgctldpb.StartRequest{})
-	if err != nil {
+	// Never come back up as a writable primary on our own. Flag suspected
+	// divergence so a subsequent follow of the current leader rewinds if needed.
+	// consensusMgr is always set in production; the guard keeps minimal unit
+	// tests (which construct a bare manager) working.
+	if pm.consensusMgr != nil {
+		if _, err := pm.consensusMgr.SetSuspectedDivergence(ctx, true); err != nil {
+			pm.logger.WarnContext(ctx, "MonitorPostgres: failed to set suspected divergence before start", "error", err)
+		}
+	}
+
+	// AsStandby is left unset, which defaults to standby.
+	if _, err := pm.pgctldClient.Start(ctx, &pgctldpb.StartRequest{}); err != nil {
 		return fmt.Errorf("MonitorPostgres: failed to start PostgreSQL: %w", err)
 	}
 
-	pm.logger.InfoContext(ctx, "MonitorPostgres: PostgreSQL started successfully")
+	pm.logger.InfoContext(ctx, "MonitorPostgres: PostgreSQL started successfully as standby")
 
 	// Reopen connections after postgres restart to replace stale socket FDs.
 	// Only when connection pool is initialized (the manager may not have

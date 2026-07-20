@@ -66,6 +66,19 @@ message StartRequest {
 
   // Additional postgres command line arguments
   repeated string extra_args = 2;
+
+  // If true or unset, creates standby.signal before start so postgres comes up
+  // in recovery (standby) mode and never as a writable primary. Set to false
+  // explicitly only for the rare case that intentionally needs a writable
+  // primary from the first start (e.g. bootstrapping a brand-new shard).
+  // Promotion of a standby to a writable primary happens only through an
+  // explicit, consensus-gated pg_promote().
+  //
+  // Declared `optional` so the field carries explicit presence: an omitted
+  // value must be distinguishable from an explicit false, since the safe
+  // (standby) behavior is the default and a plain proto3 bool cannot tell
+  // "unset" apart from "false". Mirrors RestartRequest.as_standby.
+  optional bool as_standby = 3;
 }
 
 message StartResponse {
@@ -103,8 +116,12 @@ message RestartRequest {
 
   repeated string extra_args = 4;
 
-  // If true, creates standby.signal before restart (for demotion to standby)
-  bool as_standby = 5;
+  // If true or unset, creates standby.signal before restart so postgres comes
+  // up in recovery (standby) mode rather than as a writable primary. Set to
+  // false explicitly to restart while staying (or becoming) a writable
+  // primary. Declared `optional` for the same explicit-presence reason as
+  // StartRequest.as_standby, which this mirrors.
+  optional bool as_standby = 5;
 }
 
 message RestartResponse {

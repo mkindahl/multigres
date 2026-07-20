@@ -378,7 +378,7 @@ func (pm *MultipoolerManager) startPostgreSQLAfterRestore(ctx context.Context, b
 		"backup_id", backupID)
 
 	_, err := pgctldClient.Restart(restartCtx, &pgctldpb.RestartRequest{
-		AsStandby: true,
+		AsStandby: new(true),
 	})
 	if err != nil {
 		return mterrors.New(mtrpcpb.Code_INTERNAL,

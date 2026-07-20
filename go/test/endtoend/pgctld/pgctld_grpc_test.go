@@ -76,8 +76,10 @@ func TestGRPCServerIntegration(t *testing.T) {
 		_, err = client.InitDataDir(ctx, &pb.InitDataDirRequest{})
 		require.NoError(t, err)
 
-		// Step 3: Start PostgreSQL
-		startResp, err := client.Start(ctx, &pb.StartRequest{})
+		// Step 3: Start PostgreSQL as a writable primary — this generic lifecycle
+		// test isn't about standby/replication, and AsStandby defaults to standby
+		// when unset.
+		startResp, err := client.Start(ctx, &pb.StartRequest{AsStandby: new(false)})
 		require.NoError(t, err)
 		assert.NotEmpty(t, startResp.Message)
 
@@ -97,8 +99,9 @@ func TestGRPCServerIntegration(t *testing.T) {
 		require.NoError(t, err)
 		assert.NotEmpty(t, reloadResp.Message)
 
-		// Step 7: Restart
-		restartResp, err := client.Restart(ctx, &pb.RestartRequest{})
+		// Step 7: Restart, staying a writable primary (AsStandby defaults to
+		// standby when unset).
+		restartResp, err := client.Restart(ctx, &pb.RestartRequest{AsStandby: new(false)})
 		require.NoError(t, err)
 		assert.NotEmpty(t, restartResp.Message)
 
@@ -154,10 +157,12 @@ func TestGRPCErrorHandling(t *testing.T) {
 		_, err := client.InitDataDir(ctx, &pb.InitDataDirRequest{})
 		require.NoError(t, err)
 
-		_, err = client.Start(ctx, &pb.StartRequest{})
+		_, err = client.Start(ctx, &pb.StartRequest{AsStandby: new(false)})
 		require.NoError(t, err)
 
-		// Try to start again - should handle gracefully
+		// Try to start again - should handle gracefully. AsStandby is irrelevant
+		// here: StartPostgreSQLWithResult returns early on AlreadyRunning before
+		// touching standby.signal.
 		startResp, err := client.Start(ctx, &pb.StartRequest{})
 		if err != nil {
 			// Error is acceptable

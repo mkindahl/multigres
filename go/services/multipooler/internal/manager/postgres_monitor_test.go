@@ -1262,6 +1262,7 @@ func TestStartPostgres_Success(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.True(t, mockPgctld.startCalled)
+	assert.True(t, mockPgctld.startAsStandby, "monitor must start postgres as a standby, never as a writable primary")
 }
 
 func TestStartPostgres_PgctldUnavailable(t *testing.T) {

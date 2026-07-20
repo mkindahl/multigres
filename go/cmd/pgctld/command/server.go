@@ -547,8 +547,18 @@ func (s *PgCtldService) StartPgBackRestManagement() {
 	})
 }
 
+// standbyRequested reports whether standby.signal should be present: unset
+// (nil) and explicit true both mean standby — the safe default — while only
+// an explicit false means the caller wants a writable primary. as_standby is
+// declared `optional` in both StartRequest and RestartRequest specifically so
+// this presence check can distinguish "unset" from "false".
+func standbyRequested(asStandby *bool) bool {
+	return asStandby == nil || *asStandby
+}
+
 func (s *PgCtldService) Start(ctx context.Context, req *pb.StartRequest) (*pb.StartResponse, error) {
-	s.logger.InfoContext(ctx, "gRPC Start request", "port", req.Port)
+	asStandby := standbyRequested(req.AsStandby)
+	s.logger.InfoContext(ctx, "gRPC Start request", "port", req.Port, "as_standby", asStandby)
 
 	// Check if data directory is initialized
 	if !pgctld.IsDataDirInitialized() {
@@ -556,8 +566,7 @@ func (s *PgCtldService) Start(ctx context.Context, req *pb.StartRequest) (*pb.St
 		return nil, fmt.Errorf("data directory not initialized: %s. Run 'pgctld init' first", dataDir)
 	}
 
-	// Use the pre-configured PostgreSQL config for start operation
-	result, err := StartPostgreSQLWithResult(s.logger, s.pgConfig)
+	result, err := StartPostgreSQLWithResult(s.logger, s.pgConfig, asStandby)
 	if err != nil {
 		return nil, fmt.Errorf("failed to start PostgreSQL: %w", err)
 	}
@@ -594,7 +603,8 @@ func (s *PgCtldService) Stop(ctx context.Context, req *pb.StopRequest) (*pb.Stop
 }
 
 func (s *PgCtldService) Restart(ctx context.Context, req *pb.RestartRequest) (*pb.RestartResponse, error) {
-	s.logger.InfoContext(ctx, "gRPC Restart request", "mode", req.Mode, "port", req.Port, "as_standby", req.AsStandby)
+	asStandby := standbyRequested(req.AsStandby)
+	s.logger.InfoContext(ctx, "gRPC Restart request", "mode", req.Mode, "port", req.Port, "as_standby", asStandby)
 
 	// Check if data directory is initialized
 	if !pgctld.IsDataDirInitialized() {
@@ -603,7 +613,7 @@ func (s *PgCtldService) Restart(ctx context.Context, req *pb.RestartRequest) (*p
 	}
 
 	// Use the pre-configured PostgreSQL config for restart operation
-	result, err := RestartPostgreSQLWithResult(s.logger, s.pgConfig, req.Mode, req.AsStandby)
+	result, err := RestartPostgreSQLWithResult(s.logger, s.pgConfig, req.Mode, asStandby)
 	if err != nil {
 		return nil, fmt.Errorf("failed to restart PostgreSQL: %w", err)
 	}

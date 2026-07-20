@@ -65,8 +65,13 @@ func (p *localProvisioner) startPostgreSQLViaPgctld(ctx context.Context, address
 		return nil
 	}
 
-	// Data directory exists but PostgreSQL is not running - start it
-	fmt.Printf(" starting PostgreSQL...")
+	// Data directory exists but PostgreSQL is not running - start it as a
+	// standby (the default; AsStandby is left unset). This node may be a
+	// former primary; bringing it back up writable could produce two writable
+	// servers if a new leader was elected while it was down. Consensus
+	// (multiorch) promotes it to a writable primary only when appropriate;
+	// until then it stays a read-only standby.
+	fmt.Printf(" starting PostgreSQL as standby...")
 	startResp, err := client.Start(ctx, &pb.StartRequest{})
 	if err != nil {
 		return fmt.Errorf("failed to start PostgreSQL: %w", err)

@@ -182,6 +182,84 @@ func TestPgCtldServiceStart_MissingPoolerDir(t *testing.T) {
 	})
 }
 
+// TestPgCtldServiceStart_DefaultsToStandby verifies that Start with AsStandby
+// left unset writes standby.signal before starting, so postgres comes up in
+// recovery mode and never as a writable primary by default.
+func TestPgCtldServiceStart_DefaultsToStandby(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+	baseDir := t.TempDir()
+	poolerDir := baseDir
+	dataDir := filepath.Join(baseDir, "pg_data")
+	t.Setenv(constants.PgDataDirEnvVar, dataDir)
+
+	binDir := filepath.Join(baseDir, "bin")
+	require.NoError(t, os.MkdirAll(binDir, 0o755))
+	testutil.CreateMockPostgreSQLBinaries(t, binDir)
+	t.Setenv("PATH", binDir+":"+os.Getenv("PATH"))
+
+	// Initialize a mock data directory so IsDataDirInitialized() returns true.
+	require.NoError(t, os.MkdirAll(dataDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dataDir, "PG_VERSION"), []byte("16\n"), 0o644))
+
+	service, err := NewPgCtldService(logger, testServiceConfig, 30, poolerDir, "localhost", 0, "")
+	require.NoError(t, err)
+	defer service.Close()
+
+	ctx := context.Background()
+
+	resp, err := service.Start(ctx, &pb.StartRequest{})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	assert.Greater(t, resp.Pid, int32(0), "started postgres must have a valid PID")
+
+	// The critical assertion: standby.signal must exist so postgres came up in recovery mode.
+	_, statErr := os.Stat(filepath.Join(dataDir, "standby.signal"))
+	assert.NoError(t, statErr, "Start with AsStandby unset must default to writing standby.signal")
+
+	// Cleanup: stop the mock postgres process created by Start.
+	_, _ = service.Stop(ctx, &pb.StopRequest{Mode: "fast"})
+}
+
+// TestPgCtldServiceStart_AsStandbyFalse verifies that Start with AsStandby
+// explicitly set to false does not write standby.signal, so postgres comes up
+// as a writable primary.
+func TestPgCtldServiceStart_AsStandbyFalse(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+	baseDir := t.TempDir()
+	poolerDir := baseDir
+	dataDir := filepath.Join(baseDir, "pg_data")
+	t.Setenv(constants.PgDataDirEnvVar, dataDir)
+
+	binDir := filepath.Join(baseDir, "bin")
+	require.NoError(t, os.MkdirAll(binDir, 0o755))
+	testutil.CreateMockPostgreSQLBinaries(t, binDir)
+	t.Setenv("PATH", binDir+":"+os.Getenv("PATH"))
+
+	// Initialize a mock data directory so IsDataDirInitialized() returns true.
+	require.NoError(t, os.MkdirAll(dataDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dataDir, "PG_VERSION"), []byte("16\n"), 0o644))
+
+	service, err := NewPgCtldService(logger, testServiceConfig, 30, poolerDir, "localhost", 0, "")
+	require.NoError(t, err)
+	defer service.Close()
+
+	ctx := context.Background()
+
+	resp, err := service.Start(ctx, &pb.StartRequest{AsStandby: new(false)})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	assert.Greater(t, resp.Pid, int32(0), "started postgres must have a valid PID")
+
+	// The critical assertion: standby.signal must not exist so postgres came up writable.
+	_, statErr := os.Stat(filepath.Join(dataDir, "standby.signal"))
+	assert.True(t, os.IsNotExist(statErr), "Start with AsStandby=false must not write standby.signal")
+
+	// Cleanup: stop the mock postgres process created by Start.
+	_, _ = service.Stop(ctx, &pb.StopRequest{Mode: "fast"})
+}
+
 func TestPgCtldServiceStop(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -366,9 +444,10 @@ func TestPgCtldServiceRestart(t *testing.T) {
 		require.NoError(t, err)
 
 		request := &pb.RestartRequest{
-			Mode:    "fast",
-			Timeout: durationpb.New(30 * time.Second),
-			Port:    5432,
+			Mode:      "fast",
+			Timeout:   durationpb.New(30 * time.Second),
+			Port:      5432,
+			AsStandby: new(false),
 		}
 
 		resp, err := service.Restart(context.Background(), request)
@@ -376,6 +455,37 @@ func TestPgCtldServiceRestart(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, resp)
 		assert.Contains(t, resp.Message, "restarted successfully")
+	})
+
+	t.Run("restart defaults to standby when as_standby unset", func(t *testing.T) {
+		baseDir, cleanup := testutil.TempDir(t, "pgctld_grpc_restart_default_test")
+		defer cleanup()
+
+		dataDir := testutil.CreateDataDir(t, baseDir, true)
+		testutil.CreatePIDFile(t, dataDir, 12345)
+
+		binDir := filepath.Join(baseDir, "bin")
+		require.NoError(t, os.MkdirAll(binDir, 0o755))
+		testutil.CreateMockPostgreSQLBinaries(t, binDir)
+		t.Setenv("PATH", binDir+":"+os.Getenv("PATH"))
+
+		poolerDir := baseDir
+
+		service, err := NewPgCtldService(testLogger(), testServiceConfig, 30, poolerDir, "localhost", 0, "")
+		require.NoError(t, err)
+
+		resp, err := service.Restart(context.Background(), &pb.RestartRequest{
+			Mode: "fast",
+			Port: 5432,
+		})
+
+		require.NoError(t, err)
+		require.NotNil(t, resp)
+
+		// The critical assertion: standby.signal must exist so postgres came up
+		// in recovery mode even though the caller never set AsStandby.
+		_, statErr := os.Stat(filepath.Join(dataDir, "standby.signal"))
+		assert.NoError(t, statErr, "Restart with AsStandby unset must default to writing standby.signal")
 	})
 }
 
@@ -702,7 +812,7 @@ func TestPgCtldService_StopRewindStart(t *testing.T) {
 	// must be able to restart after stop+rewind without requiring a pgctld process restart.
 	restartResp, err := service.Restart(ctx, &pb.RestartRequest{
 		Mode:      "fast",
-		AsStandby: true,
+		AsStandby: new(true),
 	})
 	require.NoError(t, err, "Restart as standby must succeed after stop+pg_rewind — REGRESSION: stop→rewind→start lifecycle must work")
 	require.NotNil(t, restartResp)

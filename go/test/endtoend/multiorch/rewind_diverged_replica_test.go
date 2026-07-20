@@ -154,7 +154,7 @@ func TestRewindDivergedReplica(t *testing.T) {
 	_, err = r1PgctldClient.Restart(t.Context(), &pgctldpb.RestartRequest{
 		Mode:      "fast",
 		Timeout:   durationpb.New(15 * time.Second),
-		AsStandby: true,
+		AsStandby: new(true),
 	})
 	require.NoError(t, err, "should restart R1 as standby")
 	t.Log("Restarted R1 as standby (diverged timeline, primary_conninfo set)")

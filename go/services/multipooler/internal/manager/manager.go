@@ -1130,7 +1130,7 @@ func (pm *MultipoolerManager) restartPostgresAsStandby(ctx context.Context, stat
 		Timeout:   nil, // Use default timeout
 		Port:      0,   // Use default port
 		ExtraArgs: nil,
-		AsStandby: true, // Create standby.signal before restart
+		AsStandby: new(true), // Create standby.signal before restart
 	}
 
 	resp, err := pm.pgctldClient.Restart(ctx, req)

@@ -1012,7 +1012,7 @@ func (pm *MultipoolerManager) restartAsStandbyLocked(
 	// postgres was just stopped and needs to come back as a standby.
 	if _, err := pm.pgctldClient.Restart(ctx, &pgctldpb.RestartRequest{
 		Mode:      "fast",
-		AsStandby: true,
+		AsStandby: new(true),
 	}); err != nil {
 		return false, mterrors.Wrap(err, "restart postgres as standby")
 	}

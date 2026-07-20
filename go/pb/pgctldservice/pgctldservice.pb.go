@@ -102,7 +102,19 @@ type StartRequest struct {
 	// Override the default port
 	Port int32 `protobuf:"varint,1,opt,name=port,proto3" json:"port,omitempty"`
 	// Additional postgres command line arguments
-	ExtraArgs     []string `protobuf:"bytes,2,rep,name=extra_args,json=extraArgs,proto3" json:"extra_args,omitempty"`
+	ExtraArgs []string `protobuf:"bytes,2,rep,name=extra_args,json=extraArgs,proto3" json:"extra_args,omitempty"`
+	// If true or unset, creates standby.signal before start so postgres comes up
+	// in recovery (standby) mode and never as a writable primary. Set to false
+	// explicitly only for the rare case that intentionally needs a writable
+	// primary from the first start (e.g. bootstrapping a brand-new shard).
+	// Promotion of a standby to a writable primary happens only through an
+	// explicit, consensus-gated pg_promote().
+	//
+	// Declared `optional` so the field carries explicit presence: an omitted
+	// value must be distinguishable from an explicit false, since the safe
+	// (standby) behavior is the default and a plain proto3 bool cannot tell
+	// "unset" apart from "false". Mirrors RestartRequest.as_standby.
+	AsStandby     *bool `protobuf:"varint,3,opt,name=as_standby,json=asStandby,proto3,oneof" json:"as_standby,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -149,6 +161,13 @@ func (x *StartRequest) GetExtraArgs() []string {
 		return x.ExtraArgs
 	}
 	return nil
+}
+
+func (x *StartRequest) GetAsStandby() bool {
+	if x != nil && x.AsStandby != nil {
+		return *x.AsStandby
+	}
+	return false
 }
 
 type StartResponse struct {
@@ -315,8 +334,12 @@ type RestartRequest struct {
 	// Override default port for start phase
 	Port      int32    `protobuf:"varint,3,opt,name=port,proto3" json:"port,omitempty"`
 	ExtraArgs []string `protobuf:"bytes,4,rep,name=extra_args,json=extraArgs,proto3" json:"extra_args,omitempty"`
-	// If true, creates standby.signal before restart (for demotion to standby)
-	AsStandby     bool `protobuf:"varint,5,opt,name=as_standby,json=asStandby,proto3" json:"as_standby,omitempty"`
+	// If true or unset, creates standby.signal before restart so postgres comes
+	// up in recovery (standby) mode rather than as a writable primary. Set to
+	// false explicitly to restart while staying (or becoming) a writable
+	// primary. Declared `optional` for the same explicit-presence reason as
+	// StartRequest.as_standby, which this mirrors.
+	AsStandby     *bool `protobuf:"varint,5,opt,name=as_standby,json=asStandby,proto3,oneof" json:"as_standby,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -380,8 +403,8 @@ func (x *RestartRequest) GetExtraArgs() []string {
 }
 
 func (x *RestartRequest) GetAsStandby() bool {
-	if x != nil {
-		return x.AsStandby
+	if x != nil && x.AsStandby != nil {
+		return *x.AsStandby
 	}
 	return false
 }
@@ -1233,11 +1256,14 @@ var File_pgctldservice_proto protoreflect.FileDescriptor
 
 const file_pgctldservice_proto_rawDesc = "" +
 	"\n" +
-	"\x13pgctldservice.proto\x12\rpgctldservice\x1a\x1egoogle/protobuf/duration.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"A\n" +
+	"\x13pgctldservice.proto\x12\rpgctldservice\x1a\x1egoogle/protobuf/duration.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"t\n" +
 	"\fStartRequest\x12\x12\n" +
 	"\x04port\x18\x01 \x01(\x05R\x04port\x12\x1d\n" +
 	"\n" +
-	"extra_args\x18\x02 \x03(\tR\textraArgs\";\n" +
+	"extra_args\x18\x02 \x03(\tR\textraArgs\x12\"\n" +
+	"\n" +
+	"as_standby\x18\x03 \x01(\bH\x00R\tasStandby\x88\x01\x01B\r\n" +
+	"\v_as_standby\";\n" +
 	"\rStartResponse\x12\x10\n" +
 	"\x03pid\x18\x01 \x01(\x05R\x03pid\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\"V\n" +
@@ -1245,15 +1271,16 @@ const file_pgctldservice_proto_rawDesc = "" +
 	"\x04mode\x18\x01 \x01(\tR\x04mode\x123\n" +
 	"\atimeout\x18\x02 \x01(\v2\x19.google.protobuf.DurationR\atimeout\"(\n" +
 	"\fStopResponse\x12\x18\n" +
-	"\amessage\x18\x01 \x01(\tR\amessage\"\xab\x01\n" +
+	"\amessage\x18\x01 \x01(\tR\amessage\"\xbf\x01\n" +
 	"\x0eRestartRequest\x12\x12\n" +
 	"\x04mode\x18\x01 \x01(\tR\x04mode\x123\n" +
 	"\atimeout\x18\x02 \x01(\v2\x19.google.protobuf.DurationR\atimeout\x12\x12\n" +
 	"\x04port\x18\x03 \x01(\x05R\x04port\x12\x1d\n" +
 	"\n" +
-	"extra_args\x18\x04 \x03(\tR\textraArgs\x12\x1d\n" +
+	"extra_args\x18\x04 \x03(\tR\textraArgs\x12\"\n" +
 	"\n" +
-	"as_standby\x18\x05 \x01(\bR\tasStandby\"=\n" +
+	"as_standby\x18\x05 \x01(\bH\x00R\tasStandby\x88\x01\x01B\r\n" +
+	"\v_as_standby\"=\n" +
 	"\x0fRestartResponse\x12\x10\n" +
 	"\x03pid\x18\x01 \x01(\x05R\x03pid\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\"\x15\n" +
@@ -1404,6 +1431,8 @@ func file_pgctldservice_proto_init() {
 	if File_pgctldservice_proto != nil {
 		return
 	}
+	file_pgctldservice_proto_msgTypes[0].OneofWrappers = []any{}
+	file_pgctldservice_proto_msgTypes[4].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
