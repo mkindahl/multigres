@@ -117,7 +117,7 @@ Prerequisites for the backup demo:
 
 This is a demo for how to migrate a table from a freestanding external PostgreSQL into the Multigres cluster with the Multigres Migrator migration API, then kill the target primary mid-migration to show the coordinator resumes on the newly elected primary, and finally cut a live application over to Multigres — all with no data loss. The full walkthrough (with explanation and the kill-primary/cutover steps) is in [`../migration-demo.md`](../migration-demo.md); the short version:
 
-Prerequisites: cluster up and port-forwards running (Steps 1–4), plus `bin/multigres` (`make build`) and `jq`.
+Prerequisites: cluster up and port-forwards running (Steps 1–4), plus `bin/multigres` (`make build`), `jq`, and — for the dashboard below — `tmux` and `watch` (`brew install tmux watch`).
 
 1. Start and seed the external source (a `postgres:17` container on the kind network, `wal_level=logical`):
 
@@ -143,6 +143,14 @@ bin/multigres start-migration --admin-server localhost:18070 --id "$ID"
 ./run-appclient.sh watch-gateway  # live summary of the Multigres side (fills in as it streams)
 ./run-appclient.sh watch-source   # live summary of the source (optional)
 ```
+
+Or, instead of separate terminals, launch a single 4-pane tmux dashboard — a command pane, a live migrations+state table, the source balance, and the target (Multigres) balance:
+
+```bash
+./demo-dashboard.sh
+```
+
+The command pane opens with a ready-to-paste `create-migration`/`start`/`drop` cheat sheet (source IP filled in when the source container is up). Run `./run-appclient.sh write` in the command pane (or another terminal) to drive writes.
 
 4. Once streaming, kill the primary pooler pod to show the migration is picked up on the new primary, then cut the app over to Multigres by sending `SIGUSR1` to the writer (`kill -USR1 $(pgrep -f 'appclient write')`). See [`../migration-demo.md`](../migration-demo.md) for details.
 
