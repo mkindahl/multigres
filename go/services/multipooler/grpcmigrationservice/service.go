@@ -84,6 +84,7 @@ func (s *migrationService) CreateMigration(ctx context.Context, req *migratorpb.
 		CopyData:       copyData,
 		SkipSchemaCopy: req.SkipSchemaCopy,
 		SequenceMargin: req.SequenceMargin,
+		QuiesceRoles:   req.QuiesceRoles,
 	})
 	if err != nil {
 		return nil, toGRPC(err)
@@ -166,6 +167,22 @@ func (s *migrationService) GetMigrations(ctx context.Context, req *migratorpb.Ge
 	return &migratorpb.GetMigrationsResponse{Migrations: out}, nil
 }
 
+func (s *migrationService) GetMigrationJournal(ctx context.Context, req *migratorpb.GetMigrationJournalRequest) (*migratorpb.GetMigrationJournalResponse, error) {
+	coord, err := s.manager.MigrationCoordinatorIfPrimary(ctx)
+	if err != nil {
+		return nil, toGRPC(err)
+	}
+	entries, err := coord.GetMigrationJournal(ctx, migrationRef(req.Id, req.Name))
+	if err != nil {
+		return nil, toGRPC(err)
+	}
+	out := make([]*migratorpb.MigrationJournalEntry, len(entries))
+	for i, e := range entries {
+		out[i] = journalEntryToProto(e)
+	}
+	return &migratorpb.GetMigrationJournalResponse{Entries: out}, nil
+}
+
 func (s *migrationService) DropMigration(ctx context.Context, req *migratorpb.DropMigrationRequest) (*migratorpb.DropMigrationResponse, error) {
 	coord, err := s.manager.MigrationCoordinatorIfPrimary(ctx)
 	if err != nil {
@@ -218,7 +235,11 @@ func (s *migrationService) ActivateMigration(ctx context.Context, req *migratorp
 	if err != nil {
 		return nil, toGRPC(err)
 	}
-	proj, err := coord.Activate(ctx, migrationRef(req.Id, req.Name))
+	opts := migration.ActivateOptions{
+		MaxLagBytes: req.MaxLagBytes,
+		WaitTimeout: time.Duration(req.WaitTimeoutSeconds) * time.Second,
+	}
+	proj, err := coord.Activate(ctx, migrationRef(req.Id, req.Name), opts)
 	if err != nil {
 		return nil, toGRPC(err)
 	}
@@ -242,6 +263,9 @@ func toGRPC(err error) error {
 	if errors.Is(err, migration.ErrNotFound) {
 		return status.Error(codes.NotFound, err.Error())
 	}
+	if errors.Is(err, migration.ErrNotReady) {
+		return status.Error(codes.FailedPrecondition, err.Error())
+	}
 	return mterrors.ToGRPC(err)
 }
 
@@ -261,12 +285,32 @@ func projToProto(p *migration.Projection) *migratorpb.Migration {
 		CaughtUp:         p.CaughtUp,
 		PublicationName:  p.PublicationName,
 		SubscriptionName: p.SubscriptionName,
+		LagBytes:         p.LagBytes,
+		LagSeconds:       p.LagSeconds,
 		CreatedAt:        timestamppb.New(p.CreatedAt),
 	}
 	if p.StreamingSince != nil {
 		m.StreamingSince = timestamppb.New(*p.StreamingSince)
 	}
 	return m
+}
+
+// journalEntryToProto maps a coordinator journal entry to its proto form. The
+// journal never contains credentials, so all fields pass through unredacted.
+func journalEntryToProto(e *migration.JournalEntry) *migratorpb.MigrationJournalEntry {
+	return &migratorpb.MigrationJournalEntry{
+		Seq:           e.Seq,
+		MigrationId:   e.MigrationID,
+		MigrationName: e.MigrationName,
+		Event:         string(e.Event),
+		Phase:         phaseToProto(e.Phase),
+		Direction:     dirToProto(e.Direction),
+		FromLsn:       e.FromLSN,
+		ToLsn:         e.ToLSN,
+		LastError:     e.LastError,
+		Detail:        e.Detail,
+		CreatedAt:     timestamppb.New(e.CreatedAt),
+	}
 }
 
 func phaseToProto(p migration.Phase) migratorpb.MigrationPhase {

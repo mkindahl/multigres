@@ -374,6 +374,23 @@ export class Migration extends Message<Migration> {
    */
   name = "";
 
+  /**
+   * lag_bytes / lag_seconds are the live replication lag measured on the current
+   * publisher (the external source in IMPORT, the Multigres target in EXPORT):
+   * lag_bytes = pg_current_wal_lsn() - confirmed_flush_lsn, lag_seconds = the
+   * walsender's replay_lag. Both are 0 when the migration is not streaming or the
+   * lag cannot be read. lag_bytes is the same measure ActivateMigration.max_lag_bytes
+   * gates on.
+   *
+   * @generated from field: uint64 lag_bytes = 19;
+   */
+  lagBytes = protoInt64.zero;
+
+  /**
+   * @generated from field: double lag_seconds = 20;
+   */
+  lagSeconds = 0;
+
   constructor(data?: PartialMessage<Migration>) {
     super();
     proto3.util.initPartial(data, this);
@@ -398,6 +415,8 @@ export class Migration extends Message<Migration> {
     { no: 16, name: "active_direction", kind: "enum", T: proto3.getEnumType(MigrationDirection) },
     { no: 17, name: "streaming_since", kind: "message", T: Timestamp },
     { no: 18, name: "name", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 19, name: "lag_bytes", kind: "scalar", T: 4 /* ScalarType.UINT64 */ },
+    { no: 20, name: "lag_seconds", kind: "scalar", T: 1 /* ScalarType.DOUBLE */ },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): Migration {
@@ -414,6 +433,215 @@ export class Migration extends Message<Migration> {
 
   static equals(a: Migration | PlainMessage<Migration> | undefined, b: Migration | PlainMessage<Migration> | undefined): boolean {
     return proto3.util.equals(Migration, a, b);
+  }
+}
+
+/**
+ * MigrationJournalEntry is one row of a migration's durable, append-only audit
+ * log (multigres.migration_journal): each lifecycle action (create, start, phase
+ * advance, direction switch, drop, failure) appends one entry. It is an internal
+ * audit surface — never contains credentials — and, unlike the Migration
+ * projection, is retained after the migration is dropped.
+ *
+ * @generated from message migrator.MigrationJournalEntry
+ */
+export class MigrationJournalEntry extends Message<MigrationJournalEntry> {
+  /**
+   * seq is the database-generated global monotonic audit order.
+   *
+   * @generated from field: int64 seq = 1;
+   */
+  seq = protoInt64.zero;
+
+  /**
+   * @generated from field: int64 migration_id = 2;
+   */
+  migrationId = protoInt64.zero;
+
+  /**
+   * migration_name is the migration's optional name, denormalized at write time
+   * so the entry stays readable after the migration row is dropped.
+   *
+   * @generated from field: string migration_name = 3;
+   */
+  migrationName = "";
+
+  /**
+   * event is the action: CREATE, START, PHASE, ACTIVATE, DEACTIVATE, DROP, FAILED.
+   *
+   * @generated from field: string event = 4;
+   */
+  event = "";
+
+  /**
+   * phase is the migration phase in effect at (or resulting from) the action.
+   *
+   * @generated from field: migrator.MigrationPhase phase = 5;
+   */
+  phase = MigrationPhase.UNSPECIFIED;
+
+  /**
+   * direction is the active replication direction at the action.
+   *
+   * @generated from field: migrator.MigrationDirection direction = 6;
+   */
+  direction = MigrationDirection.UNSPECIFIED;
+
+  /**
+   * from_lsn is the drained-to / quiesce LSN on the old writer (direction switch
+   * and graceful drop); empty otherwise.
+   *
+   * @generated from field: string from_lsn = 7;
+   */
+  fromLsn = "";
+
+  /**
+   * to_lsn is the start LSN on the new writer (direction switch); empty otherwise.
+   *
+   * @generated from field: string to_lsn = 8;
+   */
+  toLsn = "";
+
+  /**
+   * last_error is the failure reason (FAILED entries).
+   *
+   * @generated from field: string last_error = 9;
+   */
+  lastError = "";
+
+  /**
+   * detail is free-form context, e.g. "COPYING->IMPORTING" for a phase advance.
+   *
+   * @generated from field: string detail = 10;
+   */
+  detail = "";
+
+  /**
+   * @generated from field: google.protobuf.Timestamp created_at = 11;
+   */
+  createdAt?: Timestamp;
+
+  constructor(data?: PartialMessage<MigrationJournalEntry>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "migrator.MigrationJournalEntry";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "seq", kind: "scalar", T: 3 /* ScalarType.INT64 */ },
+    { no: 2, name: "migration_id", kind: "scalar", T: 3 /* ScalarType.INT64 */ },
+    { no: 3, name: "migration_name", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 4, name: "event", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 5, name: "phase", kind: "enum", T: proto3.getEnumType(MigrationPhase) },
+    { no: 6, name: "direction", kind: "enum", T: proto3.getEnumType(MigrationDirection) },
+    { no: 7, name: "from_lsn", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 8, name: "to_lsn", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 9, name: "last_error", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 10, name: "detail", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 11, name: "created_at", kind: "message", T: Timestamp },
+  ]);
+
+  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): MigrationJournalEntry {
+    return new MigrationJournalEntry().fromBinary(bytes, options);
+  }
+
+  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): MigrationJournalEntry {
+    return new MigrationJournalEntry().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(jsonString: string, options?: Partial<JsonReadOptions>): MigrationJournalEntry {
+    return new MigrationJournalEntry().fromJsonString(jsonString, options);
+  }
+
+  static equals(a: MigrationJournalEntry | PlainMessage<MigrationJournalEntry> | undefined, b: MigrationJournalEntry | PlainMessage<MigrationJournalEntry> | undefined): boolean {
+    return proto3.util.equals(MigrationJournalEntry, a, b);
+  }
+}
+
+/**
+ * GetMigrationJournalRequest addresses one migration by id or, when id is empty,
+ * by name. A dropped migration is addressable only by id (the row that carried
+ * the name is gone, though its journal entries are retained).
+ *
+ * @generated from message migrator.GetMigrationJournalRequest
+ */
+export class GetMigrationJournalRequest extends Message<GetMigrationJournalRequest> {
+  /**
+   * @generated from field: int64 id = 1;
+   */
+  id = protoInt64.zero;
+
+  /**
+   * @generated from field: string name = 2;
+   */
+  name = "";
+
+  constructor(data?: PartialMessage<GetMigrationJournalRequest>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "migrator.GetMigrationJournalRequest";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "id", kind: "scalar", T: 3 /* ScalarType.INT64 */ },
+    { no: 2, name: "name", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+  ]);
+
+  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): GetMigrationJournalRequest {
+    return new GetMigrationJournalRequest().fromBinary(bytes, options);
+  }
+
+  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): GetMigrationJournalRequest {
+    return new GetMigrationJournalRequest().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(jsonString: string, options?: Partial<JsonReadOptions>): GetMigrationJournalRequest {
+    return new GetMigrationJournalRequest().fromJsonString(jsonString, options);
+  }
+
+  static equals(a: GetMigrationJournalRequest | PlainMessage<GetMigrationJournalRequest> | undefined, b: GetMigrationJournalRequest | PlainMessage<GetMigrationJournalRequest> | undefined): boolean {
+    return proto3.util.equals(GetMigrationJournalRequest, a, b);
+  }
+}
+
+/**
+ * @generated from message migrator.GetMigrationJournalResponse
+ */
+export class GetMigrationJournalResponse extends Message<GetMigrationJournalResponse> {
+  /**
+   * entries are the migration's journal entries, oldest first.
+   *
+   * @generated from field: repeated migrator.MigrationJournalEntry entries = 1;
+   */
+  entries: MigrationJournalEntry[] = [];
+
+  constructor(data?: PartialMessage<GetMigrationJournalResponse>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "migrator.GetMigrationJournalResponse";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "entries", kind: "message", T: MigrationJournalEntry, repeated: true },
+  ]);
+
+  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): GetMigrationJournalResponse {
+    return new GetMigrationJournalResponse().fromBinary(bytes, options);
+  }
+
+  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): GetMigrationJournalResponse {
+    return new GetMigrationJournalResponse().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(jsonString: string, options?: Partial<JsonReadOptions>): GetMigrationJournalResponse {
+    return new GetMigrationJournalResponse().fromJsonString(jsonString, options);
+  }
+
+  static equals(a: GetMigrationJournalResponse | PlainMessage<GetMigrationJournalResponse> | undefined, b: GetMigrationJournalResponse | PlainMessage<GetMigrationJournalResponse> | undefined): boolean {
+    return proto3.util.equals(GetMigrationJournalResponse, a, b);
   }
 }
 
@@ -504,6 +732,20 @@ export class CreateMigrationRequest extends Message<CreateMigrationRequest> {
    */
   publishViaPartitionRoot = false;
 
+  /**
+   * quiesce_roles are optional application role names on the source whose CONNECT
+   * privilege is revoked during the ACTIVATE cutover (and restored on a deactivate
+   * rollback or teardown), so they cannot reconnect and write to the source once it
+   * becomes a subscriber. The hard quiesce always freezes and terminates existing
+   * client backends; naming roles here additionally fences reconnects that would
+   * otherwise diverge. Each role must exist on the source and must not be the DSN's
+   * own role (validated at create time). Empty leaves the terminate + read-only
+   * barrier as the only guard.
+   *
+   * @generated from field: repeated string quiesce_roles = 15;
+   */
+  quiesceRoles: string[] = [];
+
   constructor(data?: PartialMessage<CreateMigrationRequest>) {
     super();
     proto3.util.initPartial(data, this);
@@ -523,6 +765,7 @@ export class CreateMigrationRequest extends Message<CreateMigrationRequest> {
     { no: 11, name: "skip_schema_copy", kind: "scalar", T: 8 /* ScalarType.BOOL */ },
     { no: 12, name: "source_publication", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 13, name: "publish_via_partition_root", kind: "scalar", T: 8 /* ScalarType.BOOL */ },
+    { no: 15, name: "quiesce_roles", kind: "scalar", T: 9 /* ScalarType.STRING */, repeated: true },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): CreateMigrationRequest {
@@ -711,6 +954,30 @@ export class ActivateMigrationRequest extends Message<ActivateMigrationRequest> 
    */
   name = "";
 
+  /**
+   * max_lag_bytes is the readiness threshold for the cutover. Before quiescing the
+   * source, activation polls the live replication lag (the bytes of source WAL the
+   * target has not yet confirmed-consumed) and proceeds only once it is at or below
+   * this many bytes, so the residual drain under the read-only barrier completes
+   * inside the gateway's failover-buffer window (queries buffered during the cutover
+   * are replayed, not refused). 0 uses the server default. Choosing it too large
+   * relative to the gateway buffer window risks the buffer overflowing mid-cutover;
+   * keeping it small enough is the operator's responsibility (not enforced here).
+   *
+   * @generated from field: uint64 max_lag_bytes = 3;
+   */
+  maxLagBytes = protoInt64.zero;
+
+  /**
+   * wait_timeout_seconds bounds how long activation blocks waiting for the lag to
+   * fall to max_lag_bytes. 0 uses the server default. If the threshold is not
+   * reached within the timeout, activation fails with a precondition error and the
+   * migration stays in the IMPORT direction (no cutover, no serving change).
+   *
+   * @generated from field: int64 wait_timeout_seconds = 4;
+   */
+  waitTimeoutSeconds = protoInt64.zero;
+
   constructor(data?: PartialMessage<ActivateMigrationRequest>) {
     super();
     proto3.util.initPartial(data, this);
@@ -721,6 +988,8 @@ export class ActivateMigrationRequest extends Message<ActivateMigrationRequest> 
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
     { no: 1, name: "id", kind: "scalar", T: 3 /* ScalarType.INT64 */ },
     { no: 2, name: "name", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 3, name: "max_lag_bytes", kind: "scalar", T: 4 /* ScalarType.UINT64 */ },
+    { no: 4, name: "wait_timeout_seconds", kind: "scalar", T: 3 /* ScalarType.INT64 */ },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): ActivateMigrationRequest {
