@@ -30,9 +30,9 @@ import (
 
 // TestImportHappyPathAndDrop drives a full IMPORT through the multipooler-hosted
 // Migrator service: create -> start -> catch up -> stream -> drop (default
-// drain), verifying rows land, streaming works, the source password never leaks,
-// teardown removes the subscription, and the target's identity sequence is
-// advanced so the standalone target can take writes without a PK collision.
+// drain), verifying rows land, streaming works, teardown removes the
+// subscription, and the target's identity sequence is advanced so the
+// standalone target can take writes without a PK collision.
 func TestImportHappyPathAndDrop(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping Multigres Migrator e2e in short mode")
@@ -62,26 +62,21 @@ func TestImportHappyPathAndDrop(t *testing.T) {
 	require.NoError(t, err)
 	id := createResp.GetMigration().GetId()
 	require.NotEmpty(t, id)
-	require.Equal(t, migratorpb.MigrationPhase_MIGRATION_PHASE_CREATED, createResp.GetMigration().GetPhase())
+	require.Equal(t, migratorpb.MigrationPhase_MIGRATION_PHASE_CREATED, createResp.GetStatus().GetPhase())
 
 	startResp, err := mt.StartMigration(ctx, &migratorpb.StartMigrationRequest{Id: id})
-	require.NoError(t, err, "start; last_error=%s", startResp.GetMigration().GetLastError())
+	require.NoError(t, err, "start; last_error=%s", startResp.GetStatus().GetLastError())
 
 	require.Eventually(t, func() bool {
 		resp, err := mt.GetMigrations(ctx, &migratorpb.GetMigrationsRequest{Id: id})
 		if err != nil || len(resp.GetMigrations()) == 0 {
 			return false
 		}
-		m := resp.GetMigrations()[0]
+		st := resp.GetMigrations()[0].GetStatus()
 		t.Logf("phase=%s ready=%d/%d caught_up=%v err=%q",
-			m.GetPhase(), m.GetReadyRelations(), m.GetTotalRelations(), m.GetCaughtUp(), m.GetLastError())
-		return m.GetCaughtUp()
+			st.GetPhase(), st.GetReadyRelations(), st.GetTotalRelations(), st.GetCaughtUp(), st.GetLastError())
+		return st.GetCaughtUp()
 	}, 60*time.Second, 500*time.Millisecond, "migration must catch up")
-
-	// The status projection must never leak the source password.
-	got, err := mt.GetMigrations(ctx, &migratorpb.GetMigrationsRequest{Id: id})
-	require.NoError(t, err)
-	require.NotContains(t, got.GetMigrations()[0].GetSource(), sourcePassword)
 
 	tc := targetConn(t, ctx, primary, targetDB)
 	defer tc.Close()

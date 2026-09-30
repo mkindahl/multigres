@@ -46,29 +46,53 @@ const sourcePassword = "srcpass"
 
 // objs builds a structured table selection from plain "schema.table" names — the
 // common case for the migration tests. For "*" / "schema.*" markers use sel.
-func objs(names ...string) []*migratorpb.SelectionObject {
-	out := make([]*migratorpb.SelectionObject, len(names))
-	for i, n := range names {
-		out[i] = &migratorpb.SelectionObject{Object: &migratorpb.SelectionObject_Table{Table: &migratorpb.TableSpec{QualifiedName: n}}}
-	}
-	return out
+func objs(names ...string) *migratorpb.SelectionObject {
+	return &migratorpb.SelectionObject{Object: &migratorpb.SelectionObject_Table{
+		Table: &migratorpb.TableSpec{QualifiedName: names},
+	}}
 }
 
-// sel converts flat markers ("*", "schema.*", "schema.table") into the structured
-// CreateMigrationRequest selection (all_tables + objects), mirroring what the CLI
-// and gateway send.
-func sel(markers ...string) (allTables bool, objects []*migratorpb.SelectionObject) {
+// sel converts flat markers ("*", "schema.*", "schema.table") into the single
+// structured CreateMigrationRequest.objects selection, mirroring what the CLI
+// and gateway send. The markers must agree on one form (a migration selects a
+// table list, a schema list, or all — never a mix); mixing is a test bug, so
+// sel panics rather than silently picking one.
+func sel(markers ...string) *migratorpb.SelectionObject {
+	var all bool
+	var tables, schemas []string
 	for _, m := range markers {
 		switch {
 		case m == "*":
-			allTables = true
+			all = true
 		case strings.HasSuffix(m, ".*"):
-			objects = append(objects, &migratorpb.SelectionObject{Object: &migratorpb.SelectionObject_Schema{Schema: strings.TrimSuffix(m, ".*")}})
+			schemas = append(schemas, strings.TrimSuffix(m, ".*"))
 		default:
-			objects = append(objects, &migratorpb.SelectionObject{Object: &migratorpb.SelectionObject_Table{Table: &migratorpb.TableSpec{QualifiedName: m}}})
+			tables = append(tables, m)
 		}
 	}
-	return allTables, objects
+	kinds := 0
+	for _, present := range []bool{all, len(tables) > 0, len(schemas) > 0} {
+		if present {
+			kinds++
+		}
+	}
+	if kinds > 1 {
+		panic("sel: markers mix '*', 'schema.*', and 'schema.table' forms, which a single migration can no longer combine")
+	}
+	switch {
+	case all:
+		return &migratorpb.SelectionObject{Object: &migratorpb.SelectionObject_All{All: true}}
+	case len(tables) > 0:
+		return &migratorpb.SelectionObject{Object: &migratorpb.SelectionObject_Table{
+			Table: &migratorpb.TableSpec{QualifiedName: tables},
+		}}
+	case len(schemas) > 0:
+		return &migratorpb.SelectionObject{Object: &migratorpb.SelectionObject_Schema{
+			Schema: &migratorpb.SchemaSpec{Schema: schemas},
+		}}
+	default:
+		return nil
+	}
 }
 
 func TestMain(m *testing.M) {

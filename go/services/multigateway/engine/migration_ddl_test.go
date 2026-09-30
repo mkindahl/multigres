@@ -37,7 +37,7 @@ type fakeMigrator struct {
 	drop       *migratorpb.DropMigrationRequest
 	get        *migratorpb.GetMigrationsRequest
 	getJournal *migratorpb.GetMigrationJournalRequest
-	migrations []*migratorpb.Migration
+	migrations []*migratorpb.MigrationInfo
 }
 
 func (f *fakeMigrator) CreateMigration(_ context.Context, in *migratorpb.CreateMigrationRequest, _ ...grpc.CallOption) (*migratorpb.CreateMigrationResponse, error) {
@@ -168,23 +168,18 @@ func TestMigrationDDL_CreateMigration(t *testing.T) {
 	assert.Equal(t, "host=src dbname=app", fake.create.GetSourceDsn())
 	assert.Equal(t, "appdb", fake.create.GetTargetDatabase())
 	assert.Equal(t, "0", fake.create.GetTargetShard())
-	assert.True(t, fake.create.GetAllTables())
-	assert.Empty(t, fake.create.GetObjects())
+	assert.True(t, fake.create.GetObjects().GetAll())
 
 	_, err = runSQL(t, backend, "CREATE MIGRATION m2 CONNECTION onprem FOR TABLE orders, customers WITH (copy_data = false, sequence_margin = 5)")
 	require.NoError(t, err)
-	assert.False(t, fake.create.GetAllTables())
-	require.Len(t, fake.create.GetObjects(), 2)
-	assert.Equal(t, "orders", fake.create.GetObjects()[0].GetTable().GetQualifiedName())
-	require.NotNil(t, fake.create.CopyData)
-	assert.False(t, fake.create.GetCopyData())
+	assert.Equal(t, []string{"orders", "customers"}, fake.create.GetObjects().GetTable().GetQualifiedName())
+	assert.True(t, fake.create.GetSkipCopyData())
 	assert.Equal(t, int64(5), fake.create.GetSequenceMargin())
 
 	// schema selection
 	_, err = runSQL(t, backend, "CREATE MIGRATION m3 CONNECTION onprem FOR TABLES IN SCHEMA public")
 	require.NoError(t, err)
-	require.Len(t, fake.create.GetObjects(), 1)
-	assert.Equal(t, "public", fake.create.GetObjects()[0].GetSchema())
+	assert.Equal(t, []string{"public"}, fake.create.GetObjects().GetSchema().GetSchema())
 
 	// unknown connection
 	_, err = runSQL(t, backend, "CREATE MIGRATION bad CONNECTION nope FOR ALL TABLES")
@@ -233,15 +228,20 @@ func TestMigrationDDL_LifecycleAndDrop(t *testing.T) {
 
 func TestMigrationDDL_ShowMigrations(t *testing.T) {
 	copyDone := true
-	fake := &fakeMigrator{migrations: []*migratorpb.Migration{
+	fake := &fakeMigrator{migrations: []*migratorpb.MigrationInfo{
 		{
-			Name: "orders_move", Id: 1, Source: "host=src",
-			TargetDatabase: "appdb", TargetShard: "0",
-			Phase:           migratorpb.MigrationPhase_MIGRATION_PHASE_IMPORTING,
-			ActiveDirection: migratorpb.MigrationDirection_MIGRATION_DIRECTION_IMPORT,
-			CaughtUp:        copyDone,
-			LagBytes:        4096,
-			LagSeconds:      1.5,
+			Migration: &migratorpb.Migration{
+				Name: "orders_move", Id: 1, SourceDsn: "host=src",
+				TargetDatabase: "appdb", TargetShard: "0",
+			},
+			Status: &migratorpb.MigrationStatus{
+				Id:              1,
+				Phase:           migratorpb.MigrationPhase_MIGRATION_PHASE_IMPORTING,
+				ActiveDirection: migratorpb.MigrationDirection_MIGRATION_DIRECTION_IMPORT,
+				CaughtUp:        copyDone,
+				LagBytes:        4096,
+				LagSeconds:      1.5,
+			},
 		},
 	}}
 	backend := newTestBackend(fake)

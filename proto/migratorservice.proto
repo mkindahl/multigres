@@ -55,26 +55,17 @@ enum MigrationDirection {
   MIGRATION_DIRECTION_EXPORT = 2;
 }
 
-// TableSpec selects one table for a migration, mirroring one CREATE PUBLICATION
-// "FOR TABLE" entry. qualified_name is "schema.table".
-//
-// columns, where, and include_descendants are accepted by the wire surface but
-// are NOT yet honored by the backend: supplying any of them yields a
-// feature_not_supported (SQLSTATE 0A000) error. This lets a caller (e.g. the
-// gateway SQL surface) ship the full grammar ahead of the backend and surface an
-// actionable "not yet supported" message rather than silently dropping the
-// clause. A TableSpec with only qualified_name is a plain table selection.
+// TableSpec selects tables for a migration, mirroring one CREATE PUBLICATION
+// "FOR TABLE" entry. qualified_name is the list of (optionally qualified) table names.
 message TableSpec {
   // qualified_name is the schema-qualified table name ("schema.table").
-  string qualified_name = 1;
-  // columns is an optional column list (publication column list). NOT YET
-  // SUPPORTED.
-  repeated string columns = 2;
-  // where is an optional row filter (publication WHERE). NOT YET SUPPORTED.
-  string where = 3;
-  // include_descendants publishes partition/inheritance children (the default
-  // "*"/descendants form, vs ONLY). NOT YET SUPPORTED.
-  bool include_descendants = 4;
+  repeated string qualified_name = 1;
+}
+
+// SchemaSpec selects tables in a schema rather than tables and matches 
+// FOR TABLES IN SCHEMA name [, ...] construction.
+message SchemaSpec {
+  repeated string schema = 1;
 }
 
 // SelectionObject is one entry in a migration's table selection: either a table
@@ -85,45 +76,65 @@ message TableSpec {
 message SelectionObject {
   oneof object {
     TableSpec table = 1;
-    string schema = 2;
+    SchemaSpec schema = 2;
+    bool all = 3;
   }
 }
 
-// Migration is the operator-facing projection of a migration workflow.
-// It never contains credentials; source is a redacted host/db summary.
+// Migration is the static, immutable configuration of a migration workflow —
+// everything a caller supplies in CreateMigrationRequest. Live state (phase,
+// progress, errors) is reported separately by MigrationStatus.
 message Migration {
   int64 id = 1;
-  // source is a redacted summary of the source server (host/db, no password).
-  string source = 2;
-  string target_database = 3;
-  string target_shard = 4;
-  repeated string tables = 5;
-  MigrationPhase phase = 7;
-  string last_error = 8;
-  // total_relations / ready_relations report initial-copy progress (srsubstate).
-  int64 total_relations = 9;
-  int64 ready_relations = 10;
-  bool caught_up = 11;
-  string publication_name = 12;
-  string subscription_name = 13;
-  google.protobuf.Timestamp created_at = 14;
-  reserved 15; // was updated_at; removed for now, may return
-  // active_direction is which side is currently the publisher.
-  MigrationDirection active_direction = 16;
-  // streaming_since is set when the migration first reaches STREAMING.
-  google.protobuf.Timestamp streaming_since = 17;
   // name is the optional, human-friendly identifier, unique per target database.
   // Empty for migrations created without one. The generated id remains the stable
   // internal key.
-  string name = 18;
+  string name = 2;
+  // source_dsn is a full libpq conninfo to the standalone source postgres (may
+  // include TLS options). Returned as-is on read paths, which may expose a
+  // password. Intentional for now while this API is only used by trusted
+  // operators; revisit (redact or split out) before it is exposed more widely.
+  string source_dsn = 3;
+  string target_database = 4;
+  string target_shard = 5;
+  SelectionObject objects = 6;
+}
+
+// MigrationStatus is the live, observed state of a migration workflow:
+// everything that changes after creation. Every RPC that hands back a
+// migration returns both it and the migration's static Migration (see
+// MigrationInfo).
+message MigrationStatus {
+  int64 id = 1;
+  MigrationPhase phase = 2;
+  // last_error is the failure reason, set when phase is FAILED.
+  string last_error = 3;
+  // total_relations / ready_relations report initial-copy progress (srsubstate).
+  int64 total_relations = 4;
+  int64 ready_relations = 5;
+  bool caught_up = 6;
+  string publication_name = 7;
+  string subscription_name = 8;
+  google.protobuf.Timestamp created_at = 9;
+  // active_direction is which side is currently the publisher.
+  MigrationDirection active_direction = 10;
+  // streaming_since is set when the migration first reaches STREAMING.
+  google.protobuf.Timestamp streaming_since = 11;
   // lag_bytes / lag_seconds are the live replication lag measured on the current
   // publisher (the external source in IMPORT, the Multigres target in EXPORT):
   // lag_bytes = pg_current_wal_lsn() - confirmed_flush_lsn, lag_seconds = the
   // walsender's replay_lag. Both are 0 when the migration is not streaming or the
   // lag cannot be read. lag_bytes is the same measure ActivateMigration.max_lag_bytes
   // gates on.
-  uint64 lag_bytes = 19;
-  double lag_seconds = 20;
+  uint64 lag_bytes = 12;
+  double lag_seconds = 13;
+}
+
+// MigrationInfo pairs a migration's static configuration with its live
+// status. It is the shape every RPC returns for one migration.
+message MigrationInfo {
+  Migration migration = 1;
+  MigrationStatus status = 2;
 }
 
 // MigrationJournalEntry is one row of a migration's durable, append-only audit
@@ -169,40 +180,15 @@ message GetMigrationJournalResponse {
 }
 
 message CreateMigrationRequest {
-  // source_dsn is a full libpq conninfo to the standalone source postgres
-  // (may include TLS options). Held only by Multigres Migrator; never returned.
-  string source_dsn = 1;
-  string target_database = 2;
-  string target_shard = 3;
-  // 4/7/9 held the old redundant flat `tables` / `schemas` / `table_specs`
-  // selection; folded into `objects` (and the top-level `all_tables`).
-  reserved 4, 7, 9;
-  reserved "tables", "schemas", "table_specs";
-  // name is an optional, human-friendly identifier, unique per target database.
-  // When set it can address the migration in place of the generated id.
-  string name = 5;
-  // all_tables selects every table owned by the source role, as a SNAPSHOT taken
-  // at create time: tables added later are NOT auto-included (native dynamic
-  // FOR ALL TABLES would require superuser on the source). May be combined with
-  // `objects` — the two sets are unioned and de-duplicated.
-  bool all_tables = 6;
+  Migration migration = 1;
   // sequence_margin is added past each sequence's max at a direction switch.
-  int64 sequence_margin = 8;
-  // objects is the heterogeneous table selection: each entry is a table
-  // (optionally with per-table clauses) or a whole schema. Combined with
-  // all_tables when both are set (union). See SelectionObject.
-  repeated SelectionObject objects = 14;
-  // copy_data controls the initial COPY at subscription setup (default true when
-  // unset). false subscribes without an initial copy (seeded out-of-band).
-  optional bool copy_data = 10;
+  int64 sequence_margin = 5;
+  // skip_copy_data skips the initial COPY at subscription setup (the data is
+  // assumed to be seeded out-of-band). false (the default) performs the
+  // initial COPY.
+  bool skip_copy_data = 7;
   // skip_schema_copy skips the pg_dump --schema-only step (target schema exists).
-  bool skip_schema_copy = 11;
-  // source_publication reuses a pre-created publication instead of creating one.
-  // NOT YET SUPPORTED.
-  string source_publication = 12;
-  // publish_via_partition_root publishes changes through the partitioned-table
-  // root rather than leaves. NOT YET SUPPORTED.
-  bool publish_via_partition_root = 13;
+  bool skip_schema_copy = 8;
   // quiesce_roles are optional application role names on the source whose CONNECT
   // privilege is revoked during the ACTIVATE cutover (and restored on a deactivate
   // rollback or teardown), so they cannot reconnect and write to the source once it
@@ -211,10 +197,11 @@ message CreateMigrationRequest {
   // otherwise diverge. Each role must exist on the source and must not be the DSN's
   // own role (validated at create time). Empty leaves the terminate + read-only
   // barrier as the only guard.
-  repeated string quiesce_roles = 15;
+  repeated string quiesce_roles = 9;
 }
 message CreateMigrationResponse {
   Migration migration = 1;
+  MigrationStatus status = 2;
 }
 
 // UpdateMigrationRequest changes mutable fields; only fields named in
@@ -234,6 +221,7 @@ message UpdateMigrationRequest {
 }
 message UpdateMigrationResponse {
   Migration migration = 1;
+  MigrationStatus status = 2;
 }
 
 // ActivateMigrationRequest cuts the migration over to serving: drain to lag zero,
@@ -259,6 +247,7 @@ message ActivateMigrationRequest {
 }
 message ActivateMigrationResponse {
   Migration migration = 1;
+  MigrationStatus status = 2;
 }
 // DeactivateMigrationRequest rolls the migration back to non-serving: stop
 // serving, then switch back to the IMPORT direction. Requires the current
@@ -269,6 +258,7 @@ message DeactivateMigrationRequest {
 }
 message DeactivateMigrationResponse {
   Migration migration = 1;
+  MigrationStatus status = 2;
 }
 
 // StartMigrationRequest is addressed by id or, when id is empty, by name.
@@ -278,6 +268,7 @@ message StartMigrationRequest {
 }
 message StartMigrationResponse {
   Migration migration = 1;
+  MigrationStatus status = 2;
 }
 
 // GetMigrationsRequest returns one migration when id or name is set, else all.
@@ -287,7 +278,7 @@ message GetMigrationsRequest {
   string name = 2;
 }
 message GetMigrationsResponse {
-  repeated Migration migrations = 1;
+  repeated MigrationInfo migrations = 1;
 }
 
 // DropMigrationRequest is addressed by id or, when id is empty, by name.
@@ -305,6 +296,7 @@ message DropMigrationRequest {
 }
 message DropMigrationResponse {
   Migration migration = 1;
+  MigrationStatus status = 2;
 }
 
 // Migrator coordinates one logical-replication migration per workflow,

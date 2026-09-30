@@ -248,14 +248,15 @@ func (m *MigrationDDL) createMigration(ctx context.Context, s *ast.CreateMigrati
 		SourceDsn:      dsn,
 		TargetDatabase: m.backend.TargetDatabase,
 		TargetShard:    m.backend.TargetShard,
-		AllTables:      s.ForAllTables,
 	}
-	if !s.ForAllTables {
-		objs, err := selectionObjects(s.Objects)
+	if s.ForAllTables {
+		req.Objects = &migratorpb.SelectionObject{Object: &migratorpb.SelectionObject_All{All: true}}
+	} else {
+		obj, err := selectionObjects(s.Objects)
 		if err != nil {
 			return nil, err
 		}
-		req.Objects = objs
+		req.Objects = obj
 	}
 	if err := applyMigrationOptions(req, s.Options); err != nil {
 		return nil, err
@@ -344,8 +345,11 @@ func (m *MigrationDDL) showMigrations(ctx context.Context, s *ast.ShowMigrations
 	if err != nil {
 		return nil, err
 	}
+	// source_dsn is the full DSN (see Migration.source_dsn) — intentionally
+	// exposed for now, but that means SHOW MIGRATIONS prints it to any client
+	// with SQL access, a wider audience than the migrator gRPC API.
 	cols := []string{
-		"name", "id", "source", "target_database", "target_shard",
+		"name", "id", "source_dsn", "target_database", "target_shard",
 		"phase", "active_direction", "total_relations", "ready_relations",
 		"caught_up", "lag_bytes", "lag_seconds", "last_error",
 	}
@@ -354,20 +358,21 @@ func (m *MigrationDDL) showMigrations(ctx context.Context, s *ast.ShowMigrations
 		result.Fields = textFields(cols)
 	}
 	for _, mig := range resp.GetMigrations() {
+		cfg, st := mig.GetMigration(), mig.GetStatus()
 		result.Rows = append(result.Rows, sqltypes.MakeRow([][]byte{
-			[]byte(mig.GetName()),
-			[]byte(strconv.FormatInt(mig.GetId(), 10)),
-			[]byte(mig.GetSource()),
-			[]byte(mig.GetTargetDatabase()),
-			[]byte(mig.GetTargetShard()),
-			[]byte(mig.GetPhase().String()),
-			[]byte(mig.GetActiveDirection().String()),
-			[]byte(strconv.FormatInt(mig.GetTotalRelations(), 10)),
-			[]byte(strconv.FormatInt(mig.GetReadyRelations(), 10)),
-			[]byte(boolText(mig.GetCaughtUp())),
-			[]byte(strconv.FormatUint(mig.GetLagBytes(), 10)),
-			[]byte(strconv.FormatFloat(mig.GetLagSeconds(), 'f', 3, 64)),
-			[]byte(mig.GetLastError()),
+			[]byte(cfg.GetName()),
+			[]byte(strconv.FormatInt(cfg.GetId(), 10)),
+			[]byte(cfg.GetSourceDsn()),
+			[]byte(cfg.GetTargetDatabase()),
+			[]byte(cfg.GetTargetShard()),
+			[]byte(st.GetPhase().String()),
+			[]byte(st.GetActiveDirection().String()),
+			[]byte(strconv.FormatInt(st.GetTotalRelations(), 10)),
+			[]byte(strconv.FormatInt(st.GetReadyRelations(), 10)),
+			[]byte(boolText(st.GetCaughtUp())),
+			[]byte(strconv.FormatUint(st.GetLagBytes(), 10)),
+			[]byte(strconv.FormatFloat(st.GetLagSeconds(), 'f', 3, 64)),
+			[]byte(st.GetLastError()),
 		}))
 	}
 	return result, nil
@@ -489,13 +494,18 @@ func parseConnInfo(dsn string) map[string]string {
 	return kv
 }
 
-// selectionObjects converts a pub_obj_list (from the FOR clause) into migrator
-// SelectionObjects.
-func selectionObjects(list *ast.NodeList) ([]*migratorpb.SelectionObject, error) {
+// selectionObjects converts a pub_obj_list (from the FOR clause) into a single
+// migrator SelectionObject: a table list or a schema list, never a mix —
+// mirroring Postgres's own restriction that CREATE PUBLICATION's FOR clause is
+// one form or the other. Per-table column lists, WHERE filters, and ONLY
+// (excluding partition descendants) are not carried on the wire, so a caller
+// that specifies any of them gets an explicit error rather than a silently
+// dropped clause.
+func selectionObjects(list *ast.NodeList) (*migratorpb.SelectionObject, error) {
 	if list == nil {
 		return nil, nil
 	}
-	out := make([]*migratorpb.SelectionObject, 0, len(list.Items))
+	var tables, schemas []string
 	for _, it := range list.Items {
 		spec, ok := it.(*ast.PublicationObjSpec)
 		if !ok {
@@ -503,26 +513,41 @@ func selectionObjects(list *ast.NodeList) ([]*migratorpb.SelectionObject, error)
 		}
 		switch spec.PubObjType {
 		case ast.PUBLICATIONOBJ_TABLE:
-			ts := &migratorpb.TableSpec{QualifiedName: rangeVarName(spec.PubTable.Relation)}
-			if spec.PubTable.Relation != nil {
-				ts.IncludeDescendants = spec.PubTable.Relation.Inh
+			if len(schemas) > 0 {
+				return nil, errors.New("migrator: a migration's FOR clause cannot mix tables and schemas")
 			}
-			ts.Columns = append(ts.Columns, nameList(spec.PubTable.Columns)...)
-			if spec.PubTable.WhereClause != nil {
-				ts.Where = spec.PubTable.WhereClause.SqlString()
+			pt := spec.PubTable
+			if pt.Relation != nil && !pt.Relation.Inh {
+				return nil, errors.New("migrator: ONLY (excluding partition descendants) is not yet supported")
 			}
-			out = append(out, &migratorpb.SelectionObject{
-				Object: &migratorpb.SelectionObject_Table{Table: ts},
-			})
+			if pt.Columns != nil && len(pt.Columns.Items) > 0 {
+				return nil, errors.New("migrator: per-table column lists are not yet supported")
+			}
+			if pt.WhereClause != nil {
+				return nil, errors.New("migrator: per-table WHERE row filters are not yet supported")
+			}
+			tables = append(tables, rangeVarName(pt.Relation))
 		case ast.PUBLICATIONOBJ_TABLES_IN_SCHEMA:
-			out = append(out, &migratorpb.SelectionObject{
-				Object: &migratorpb.SelectionObject_Schema{Schema: spec.Name},
-			})
+			if len(tables) > 0 {
+				return nil, errors.New("migrator: a migration's FOR clause cannot mix tables and schemas")
+			}
+			schemas = append(schemas, spec.Name)
 		default:
 			return nil, errors.New("unsupported table-selection object")
 		}
 	}
-	return out, nil
+	switch {
+	case len(tables) > 0:
+		return &migratorpb.SelectionObject{Object: &migratorpb.SelectionObject_Table{
+			Table: &migratorpb.TableSpec{QualifiedName: tables},
+		}}, nil
+	case len(schemas) > 0:
+		return &migratorpb.SelectionObject{Object: &migratorpb.SelectionObject_Schema{
+			Schema: &migratorpb.SchemaSpec{Schema: schemas},
+		}}, nil
+	default:
+		return nil, nil
+	}
 }
 
 func rangeVarName(rv *ast.RangeVar) string {
@@ -602,8 +627,9 @@ func applyMigrationOptions(req *migratorpb.CreateMigrationRequest, list *ast.Nod
 		val := defElemValue(d)
 		switch strings.ToLower(d.Defname) {
 		case "copy_data":
-			b := isTruthy(val)
-			req.CopyData = &b
+			// SQL keeps the positive "copy_data" spelling; the wire field is the
+			// inverted skip_copy_data (see its proto comment).
+			req.SkipCopyData = !isTruthy(val)
 		case "skip_schema_copy":
 			req.SkipSchemaCopy = isTruthy(val)
 		case "sequence_margin":
@@ -612,10 +638,6 @@ func applyMigrationOptions(req *migratorpb.CreateMigrationRequest, list *ast.Nod
 				return fmt.Errorf("sequence_margin must be an integer: %q", val)
 			}
 			req.SequenceMargin = n
-		case "source_publication":
-			req.SourcePublication = val
-		case "publish_via_partition_root":
-			req.PublishViaPartitionRoot = isTruthy(val)
 		case "quiesce_roles":
 			req.QuiesceRoles = parseRoleList(val)
 		default:

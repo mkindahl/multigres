@@ -226,8 +226,15 @@ func TestMigrationDDL_CreateMigrationOptionErrors(t *testing.T) {
 	assert.ErrorContains(t, err, "integer")
 
 	// All the accepted options in one go.
-	_, err = runSQL(t, backend, "CREATE MIGRATION m CONNECTION c FOR ALL TABLES WITH (copy_data = false, skip_schema_copy = true, sequence_margin = 7, source_publication = pub, publish_via_partition_root = true)")
+	_, err = runSQL(t, backend, "CREATE MIGRATION m CONNECTION c FOR ALL TABLES WITH (copy_data = false, skip_schema_copy = true, sequence_margin = 7)")
 	require.NoError(t, err)
+
+	// The two options the backend never implemented are gone from the wire
+	// entirely now, so they are rejected like any other unknown option.
+	_, err = runSQL(t, backend, "CREATE MIGRATION m CONNECTION c FOR ALL TABLES WITH (source_publication = pub)")
+	assert.ErrorContains(t, err, "source_publication")
+	_, err = runSQL(t, backend, "CREATE MIGRATION m CONNECTION c FOR ALL TABLES WITH (publish_via_partition_root = true)")
+	assert.ErrorContains(t, err, "publish_via_partition_root")
 }
 
 // --- pure helpers ---
@@ -294,25 +301,51 @@ func TestMigrationDDLHelpers_rangeVarName(t *testing.T) {
 }
 
 func TestMigrationDDLHelpers_selectionObjects(t *testing.T) {
-	nilObjs, err := selectionObjects(nil)
+	nilObj, err := selectionObjects(nil)
 	require.NoError(t, err)
-	assert.Nil(t, nilObjs)
+	assert.Nil(t, nilObj)
 
-	// A table object with a column list, WHERE filter, and inheritance flag.
-	rel := ast.NewRangeVar("orders", "public", "")
-	rel.Inh = true
-	tbl := ast.NewPublicationObjSpecTable(ast.PUBLICATIONOBJ_TABLE,
-		ast.NewPublicationTable(rel, ast.NewString("id > 0"), ast.NewNodeList(ast.NewString("id"))))
-	schema := ast.NewPublicationObjSpecName(ast.PUBLICATIONOBJ_TABLES_IN_SCHEMA, "sales")
-	objs, err := selectionObjects(ast.NewNodeList(tbl, ast.NewString("skip"), schema))
+	// Multiple plain table entries fold into one TableSpec.
+	rel1 := ast.NewRangeVar("orders", "public", "")
+	rel1.Inh = true
+	tbl1 := ast.NewPublicationObjSpecTable(ast.PUBLICATIONOBJ_TABLE, ast.NewPublicationTable(rel1, nil, nil))
+	rel2 := ast.NewRangeVar("items", "public", "")
+	rel2.Inh = true
+	tbl2 := ast.NewPublicationObjSpecTable(ast.PUBLICATIONOBJ_TABLE, ast.NewPublicationTable(rel2, nil, nil))
+	obj, err := selectionObjects(ast.NewNodeList(tbl1, ast.NewString("skip"), tbl2))
 	require.NoError(t, err)
-	require.Len(t, objs, 2)
-	ts := objs[0].GetTable()
-	assert.Equal(t, "public.orders", ts.GetQualifiedName())
-	assert.True(t, ts.GetIncludeDescendants())
-	assert.Equal(t, []string{"id"}, ts.GetColumns())
-	assert.NotEmpty(t, ts.GetWhere())
-	assert.Equal(t, "sales", objs[1].GetSchema())
+	assert.Equal(t, []string{"public.orders", "public.items"}, obj.GetTable().GetQualifiedName())
+
+	// Multiple schema entries fold into one SchemaSpec.
+	schema1 := ast.NewPublicationObjSpecName(ast.PUBLICATIONOBJ_TABLES_IN_SCHEMA, "sales")
+	schema2 := ast.NewPublicationObjSpecName(ast.PUBLICATIONOBJ_TABLES_IN_SCHEMA, "reporting")
+	obj, err = selectionObjects(ast.NewNodeList(schema1, schema2))
+	require.NoError(t, err)
+	assert.Equal(t, []string{"sales", "reporting"}, obj.GetSchema().GetSchema())
+
+	// Mixing a table and a schema entry is rejected — a migration's FOR clause is
+	// one form or the other, mirroring CREATE PUBLICATION.
+	_, err = selectionObjects(ast.NewNodeList(tbl1, schema1))
+	assert.ErrorContains(t, err, "cannot mix")
+
+	// A column list, WHERE filter, and ONLY are all accepted on the wire (the
+	// wire surface used to carry them) but not backed, so each must fail with an
+	// explicit error rather than silently dropping the clause.
+	relOnly := ast.NewRangeVar("orders", "public", "")
+	relOnly.Inh = false
+	only := ast.NewPublicationObjSpecTable(ast.PUBLICATIONOBJ_TABLE, ast.NewPublicationTable(relOnly, nil, nil))
+	_, err = selectionObjects(ast.NewNodeList(only))
+	assert.ErrorContains(t, err, "ONLY")
+
+	withColumns := ast.NewPublicationObjSpecTable(ast.PUBLICATIONOBJ_TABLE,
+		ast.NewPublicationTable(rel1, nil, ast.NewNodeList(ast.NewString("id"))))
+	_, err = selectionObjects(ast.NewNodeList(withColumns))
+	assert.ErrorContains(t, err, "column")
+
+	withWhere := ast.NewPublicationObjSpecTable(ast.PUBLICATIONOBJ_TABLE,
+		ast.NewPublicationTable(rel1, ast.NewString("id > 0"), nil))
+	_, err = selectionObjects(ast.NewNodeList(withWhere))
+	assert.ErrorContains(t, err, "WHERE")
 
 	// An unsupported object type (CURRENT_SCHEMA) is rejected.
 	cur := ast.NewPublicationObjSpec(ast.PUBLICATIONOBJ_TABLES_IN_CUR_SCHEMA)
@@ -329,21 +362,21 @@ func TestMigrationDDLHelpers_applyMigrationOptions(t *testing.T) {
 		ast.NewString("skip"), // non-DefElem skipped
 		defElem("skip_schema_copy", "true"),
 		defElem("sequence_margin", "9"),
-		defElem("source_publication", "pub1"),
-		defElem("publish_via_partition_root", "yes"),
 	)
 	require.NoError(t, applyMigrationOptions(req, list))
-	require.NotNil(t, req.CopyData)
-	assert.False(t, req.GetCopyData())
+	assert.True(t, req.GetSkipCopyData(), "copy_data=false inverts to skip_copy_data=true")
 	assert.True(t, req.GetSkipSchemaCopy())
 	assert.Equal(t, int64(9), req.GetSequenceMargin())
-	assert.Equal(t, "pub1", req.GetSourcePublication())
-	assert.True(t, req.GetPublishViaPartitionRoot())
 
 	assert.ErrorContains(t, applyMigrationOptions(&migratorpb.CreateMigrationRequest{},
 		ast.NewNodeList(defElem("sequence_margin", "x"))), "integer")
 	assert.ErrorContains(t, applyMigrationOptions(&migratorpb.CreateMigrationRequest{},
 		ast.NewNodeList(defElem("nope", "1"))), "unknown migration option")
+	// The two removed backend options are no longer recognized at all.
+	assert.ErrorContains(t, applyMigrationOptions(&migratorpb.CreateMigrationRequest{},
+		ast.NewNodeList(defElem("source_publication", "pub1"))), "unknown migration option")
+	assert.ErrorContains(t, applyMigrationOptions(&migratorpb.CreateMigrationRequest{},
+		ast.NewNodeList(defElem("publish_via_partition_root", "yes"))), "unknown migration option")
 }
 
 func TestMigrationDDLHelpers_applyActivateOptions(t *testing.T) {

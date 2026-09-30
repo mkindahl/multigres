@@ -93,7 +93,7 @@ func TestActivateBuffersClientQueriesAcrossCutover(t *testing.T) {
 	// cutover immediately, so it fits inside the gateway buffer window.
 	require.Eventually(t, func() bool {
 		resp, err := mt.GetMigrations(ctx, &migratorpb.GetMigrationsRequest{Id: id})
-		return err == nil && len(resp.GetMigrations()) == 1 && resp.GetMigrations()[0].GetCaughtUp()
+		return err == nil && len(resp.GetMigrations()) == 1 && resp.GetMigrations()[0].GetStatus().GetCaughtUp()
 	}, 60*time.Second, 500*time.Millisecond, "IMPORT must catch up")
 
 	// Client connections to the gateway. The pool is opened while the shard is
@@ -146,7 +146,7 @@ func TestActivateBuffersClientQueriesAcrossCutover(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 	exportResp, err := mt.ActivateMigration(ctx, &migratorpb.ActivateMigrationRequest{Id: id})
 	require.NoError(t, err)
-	require.Equal(t, migratorpb.MigrationDirection_MIGRATION_DIRECTION_EXPORT, exportResp.GetMigration().GetActiveDirection())
+	require.Equal(t, migratorpb.MigrationDirection_MIGRATION_DIRECTION_EXPORT, exportResp.GetStatus().GetActiveDirection())
 
 	// Let the workload run a little past the cutover so post-serving writes land too,
 	// then stop and join.

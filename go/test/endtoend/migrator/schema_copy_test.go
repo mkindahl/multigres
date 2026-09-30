@@ -70,16 +70,16 @@ func TestSchemaCopyDropsExistingTargetTable(t *testing.T) {
 
 	startResp, err := mt.StartMigration(ctx, &migratorpb.StartMigrationRequest{Id: id})
 	require.NoError(t, err, "start (schema copy must drop the pre-existing target table); last_error=%s",
-		startResp.GetMigration().GetLastError())
+		startResp.GetStatus().GetLastError())
 
 	require.Eventually(t, func() bool {
 		resp, err := mt.GetMigrations(ctx, &migratorpb.GetMigrationsRequest{Id: id})
 		if err != nil || len(resp.GetMigrations()) == 0 {
 			return false
 		}
-		m := resp.GetMigrations()[0]
-		require.Empty(t, m.GetLastError(), "migration must not error on a pre-existing target table")
-		return m.GetCaughtUp()
+		st := resp.GetMigrations()[0].GetStatus()
+		require.Empty(t, st.GetLastError(), "migration must not error on a pre-existing target table")
+		return st.GetCaughtUp()
 	}, 60*time.Second, 500*time.Millisecond, "migration must catch up after dropping the pre-existing table")
 
 	// The table was recreated from the source schema (the leftover `junk` column is

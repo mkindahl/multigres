@@ -91,8 +91,6 @@ func TestCreateMigrationTableResolution(t *testing.T) {
 		{"star is search_path tables", []string{"*"}, []string{"public.items", "public.orders"}, ""},
 		{"schema wildcard reaches off-path schema", []string{"app.*"}, []string{"app.a", "app.b"}, ""},
 		{"bare name canonicalizes via search_path", []string{"orders"}, []string{"public.orders"}, ""},
-		{"star plus explicit dedups", []string{"*", "orders"}, []string{"public.items", "public.orders"}, ""},
-		{"mixed schema wildcard and explicit", []string{"app.*", "public.orders"}, []string{"app.a", "app.b", "public.orders"}, ""},
 		{"full replica identity resolves", []string{"checks.full_ri"}, []string{"checks.full_ri"}, ""},
 		{"missing schema errors", []string{"nope.*"}, nil, "schema"},
 		{"missing qualified table errors", []string{"public.nope"}, nil, "do not exist"},
@@ -102,12 +100,10 @@ func TestCreateMigrationTableResolution(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			allTables, objects := sel(tc.tables...)
 			resp, err := mt.CreateMigration(ctx, &migratorpb.CreateMigrationRequest{
 				SourceDsn:      sourceDSN(srcPort),
 				TargetDatabase: targetDB,
-				AllTables:      allTables,
-				Objects:        objects,
+				Objects:        sel(tc.tables...),
 			})
 			if tc.errContains != "" {
 				require.Error(t, err)
@@ -123,8 +119,10 @@ func TestCreateMigrationTableResolution(t *testing.T) {
 				require.NoError(t, err)
 			})
 			// resolved order is unspecified (the query does not ORDER BY), so
-			// compare as a set.
-			require.ElementsMatch(t, tc.want, resp.GetMigration().GetTables())
+			// compare as a set. The response always reports the resolved
+			// selection as a concrete table list, regardless of how it was
+			// selected (wildcard, schema, or explicit names).
+			require.ElementsMatch(t, tc.want, resp.GetMigration().GetObjects().GetTable().GetQualifiedName())
 		})
 	}
 }

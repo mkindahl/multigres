@@ -69,7 +69,7 @@ func TestGracefulDropOfImportingMigration(t *testing.T) {
 	require.NoError(t, err)
 	require.Eventually(t, func() bool {
 		resp, err := mt.GetMigrations(ctx, &migratorpb.GetMigrationsRequest{Id: id})
-		return err == nil && len(resp.GetMigrations()) == 1 && resp.GetMigrations()[0].GetCaughtUp()
+		return err == nil && len(resp.GetMigrations()) == 1 && resp.GetMigrations()[0].GetStatus().GetCaughtUp()
 	}, 60*time.Second, 500*time.Millisecond, "IMPORT must catch up")
 
 	// A caught-up IMPORTING migration holds serving (the shard is a migration target).

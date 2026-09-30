@@ -20,65 +20,37 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/multigres/multigres/go/common/mterrors"
 	migratorpb "github.com/multigres/multigres/go/pb/migrator"
 	"github.com/multigres/multigres/go/services/multipooler/internal/migration"
 )
 
-func tableObject(name string) *migratorpb.SelectionObject {
-	return &migratorpb.SelectionObject{Object: &migratorpb.SelectionObject_Table{Table: &migratorpb.TableSpec{QualifiedName: name}}}
-}
-
-func schemaObject(name string) *migratorpb.SelectionObject {
-	return &migratorpb.SelectionObject{Object: &migratorpb.SelectionObject_Schema{Schema: name}}
-}
-
 func TestFoldTableSelection(t *testing.T) {
-	t.Run("unions all_tables, schema objects, and table objects", func(t *testing.T) {
-		got, err := foldTableSelection(&migratorpb.CreateMigrationRequest{
-			AllTables: true,
-			Objects:   []*migratorpb.SelectionObject{schemaObject("sales"), tableObject("public.orders")},
-		})
-		require.NoError(t, err)
-		require.Equal(t, []string{"*", "sales.*", "public.orders"}, got)
+	t.Run("nil objects yields no patterns", func(t *testing.T) {
+		require.Empty(t, foldTableSelection(nil))
 	})
 
-	t.Run("no selection yields an empty pattern list", func(t *testing.T) {
-		got, err := foldTableSelection(&migratorpb.CreateMigrationRequest{})
-		require.NoError(t, err)
+	t.Run("all", func(t *testing.T) {
+		got := foldTableSelection(&migratorpb.SelectionObject{Object: &migratorpb.SelectionObject_All{All: true}})
+		require.Equal(t, []string{"*"}, got)
+	})
+
+	t.Run("all explicitly false yields no patterns", func(t *testing.T) {
+		got := foldTableSelection(&migratorpb.SelectionObject{Object: &migratorpb.SelectionObject_All{All: false}})
 		require.Empty(t, got)
 	})
 
-	// The per-table clauses are accepted on the wire but not yet backed; each must
-	// surface a typed feature_not_supported (0A000) rather than being dropped.
-	for _, tc := range []struct {
-		name string
-		spec *migratorpb.TableSpec
-	}{
-		{"columns", &migratorpb.TableSpec{QualifiedName: "public.orders", Columns: []string{"id"}}},
-		{"where", &migratorpb.TableSpec{QualifiedName: "public.orders", Where: "id > 0"}},
-	} {
-		t.Run("rejects "+tc.name+" as not-yet-supported", func(t *testing.T) {
-			_, err := foldTableSelection(&migratorpb.CreateMigrationRequest{
-				Objects: []*migratorpb.SelectionObject{{Object: &migratorpb.SelectionObject_Table{Table: tc.spec}}},
-			})
-			require.Error(t, err)
-			require.True(t, mterrors.IsErrorCode(err, mterrors.PgSSFeatureNotSupported),
-				"want feature_not_supported (0A000), got %v", err)
-		})
-	}
+	t.Run("schema list", func(t *testing.T) {
+		got := foldTableSelection(&migratorpb.SelectionObject{Object: &migratorpb.SelectionObject_Schema{
+			Schema: &migratorpb.SchemaSpec{Schema: []string{"sales", "reporting"}},
+		}})
+		require.Equal(t, []string{"sales.*", "reporting.*"}, got)
+	})
 
-	// include_descendants (a bare `FOR TABLE <t>` without ONLY) is accepted at the
-	// fold: it is a no-op for an ordinary table, and a table that is actually
-	// partitioned is rejected later at source validation (where relkind is known).
-	t.Run("accepts include_descendants (partitioned rejected at validation)", func(t *testing.T) {
-		got, err := foldTableSelection(&migratorpb.CreateMigrationRequest{
-			Objects: []*migratorpb.SelectionObject{{Object: &migratorpb.SelectionObject_Table{
-				Table: &migratorpb.TableSpec{QualifiedName: "public.orders", IncludeDescendants: true},
-			}}},
-		})
-		require.NoError(t, err)
-		require.Equal(t, []string{"public.orders"}, got)
+	t.Run("table list", func(t *testing.T) {
+		got := foldTableSelection(&migratorpb.SelectionObject{Object: &migratorpb.SelectionObject_Table{
+			Table: &migratorpb.TableSpec{QualifiedName: []string{"public.orders", "public.customers"}},
+		}})
+		require.Equal(t, []string{"public.orders", "public.customers"}, got)
 	})
 }
 
@@ -115,24 +87,46 @@ func TestDirToProto(t *testing.T) {
 	require.Equal(t, migratorpb.MigrationDirection_MIGRATION_DIRECTION_UNSPECIFIED, dirToProto(migration.Direction("bogus")))
 }
 
-func TestProjToProto(t *testing.T) {
+func TestMigToProto(t *testing.T) {
+	p := &migration.Projection{
+		ID: 1, Name: "nightly", Source: "h:5432/db", SourceDSN: "host=h port=5432 dbname=db password=s3cr3t",
+		TargetDatabase: "db", TargetShard: "0", Tables: []string{"public.orders"},
+	}
+	got := migToProto(p)
+	require.Equal(t, int64(1), got.GetId())
+	require.Equal(t, "nightly", got.GetName())
+	// source_dsn is the full DSN (intentionally, see its proto comment) — not the
+	// redacted Projection.Source.
+	require.Equal(t, "host=h port=5432 dbname=db password=s3cr3t", got.GetSourceDsn())
+	require.Equal(t, "db", got.GetTargetDatabase())
+	require.Equal(t, "0", got.GetTargetShard())
+	require.Equal(t, []string{"public.orders"}, got.GetObjects().GetTable().GetQualifiedName())
+
+	require.Nil(t, migToProto(&migration.Projection{ID: 2}).GetObjects(), "no resolved tables yields no SelectionObject")
+}
+
+func TestStatusToProto(t *testing.T) {
 	since := time.Now()
 	p := &migration.Projection{
-		ID: 1, Name: "nightly", Source: "h:5432/db", TargetDatabase: "db", TargetShard: "0",
-		Tables: []string{"public.orders"}, Phase: migration.PhaseExporting,
+		ID: 1, Phase: migration.PhaseExporting,
 		ActiveDirection: migration.DirectionExport, CaughtUp: true, TotalRelations: 2, ReadyRelations: 2,
 		PublicationName: "mt_pub_1", SubscriptionName: "mt_sub_1", StreamingSince: &since,
 	}
-	got := projToProto(p)
+	got := statusToProto(p)
 	require.Equal(t, int64(1), got.GetId())
-	require.Equal(t, "nightly", got.GetName())
-	require.Equal(t, "h:5432/db", got.GetSource())
-	require.Equal(t, []string{"public.orders"}, got.GetTables())
 	require.Equal(t, migratorpb.MigrationPhase_MIGRATION_PHASE_EXPORTING, got.GetPhase())
 	require.Equal(t, migratorpb.MigrationDirection_MIGRATION_DIRECTION_EXPORT, got.GetActiveDirection())
 	require.True(t, got.GetCaughtUp())
 	require.NotNil(t, got.GetStreamingSince())
 
 	// StreamingSince is optional: nil in, nil out.
-	require.Nil(t, projToProto(&migration.Projection{ID: 2}).GetStreamingSince())
+	require.Nil(t, statusToProto(&migration.Projection{ID: 2}).GetStreamingSince())
+}
+
+func TestInfoToProto(t *testing.T) {
+	p := &migration.Projection{ID: 1, Name: "nightly", Phase: migration.PhaseExporting}
+	got := infoToProto(p)
+	require.Equal(t, int64(1), got.GetMigration().GetId())
+	require.Equal(t, "nightly", got.GetMigration().GetName())
+	require.Equal(t, migratorpb.MigrationPhase_MIGRATION_PHASE_EXPORTING, got.GetStatus().GetPhase())
 }

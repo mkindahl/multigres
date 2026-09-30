@@ -32,25 +32,48 @@ import (
 	"github.com/multigres/multigres/go/tools/humansize"
 )
 
-// markersToSelection converts the CLI's flat --tables markers into the request's
-// structured selection: "*" -> all_tables, "schema.*" -> a schema object, and a
-// plain "schema.table" -> a table object.
-func markersToSelection(markers []string) (allTables bool, objects []*migratorpb.SelectionObject) {
+// markersToSelection converts the CLI's flat --tables markers into the
+// request's single SelectionObject: "*" selects all tables, "schema.*"
+// selects a whole schema, and a plain "schema.table" selects that table. The
+// markers must agree on one form (mirroring Postgres's own restriction that a
+// migration's FOR clause is a table list, a schema list, or all — never a
+// mix); mixing forms is rejected.
+func markersToSelection(markers []string) (*migratorpb.SelectionObject, error) {
+	var all bool
+	var tables, schemas []string
 	for _, m := range markers {
 		switch {
 		case m == "*":
-			allTables = true
+			all = true
 		case strings.HasSuffix(m, ".*"):
-			objects = append(objects, &migratorpb.SelectionObject{
-				Object: &migratorpb.SelectionObject_Schema{Schema: strings.TrimSuffix(m, ".*")},
-			})
+			schemas = append(schemas, strings.TrimSuffix(m, ".*"))
 		default:
-			objects = append(objects, &migratorpb.SelectionObject{
-				Object: &migratorpb.SelectionObject_Table{Table: &migratorpb.TableSpec{QualifiedName: m}},
-			})
+			tables = append(tables, m)
 		}
 	}
-	return allTables, objects
+	kinds := 0
+	for _, present := range []bool{all, len(tables) > 0, len(schemas) > 0} {
+		if present {
+			kinds++
+		}
+	}
+	if kinds > 1 {
+		return nil, errors.New("--tables cannot mix '*', 'schema.*', and 'schema.table' markers")
+	}
+	switch {
+	case all:
+		return &migratorpb.SelectionObject{Object: &migratorpb.SelectionObject_All{All: true}}, nil
+	case len(tables) > 0:
+		return &migratorpb.SelectionObject{Object: &migratorpb.SelectionObject_Table{
+			Table: &migratorpb.TableSpec{QualifiedName: tables},
+		}}, nil
+	case len(schemas) > 0:
+		return &migratorpb.SelectionObject{Object: &migratorpb.SelectionObject_Schema{
+			Schema: &migratorpb.SchemaSpec{Schema: schemas},
+		}}, nil
+	default:
+		return nil, nil
+	}
 }
 
 // splitRef interprets the --id flag, which accepts either a numeric migration id
@@ -93,28 +116,30 @@ func AddCreateMigrationCommand() *cobra.Command {
 			}
 			defer client.Close()
 
-			allTables, objects := markersToSelection(tables)
+			objects, err := markersToSelection(tables)
+			if err != nil {
+				return err
+			}
 			req := &migratorpb.CreateMigrationRequest{
 				SourceDsn:      sourceDSN,
 				TargetDatabase: targetDB,
 				TargetShard:    targetShard,
 				Name:           name,
-				AllTables:      allTables,
 				Objects:        objects,
 				SkipSchemaCopy: skipSchemaCopy,
 				QuiesceRoles:   quiesceRoles,
 			}
-			// Only send copy_data when the operator set it, so an unset flag keeps
-			// the server-side default (true).
+			// Only touch skip_copy_data when the operator set --copy-data, so an
+			// unset flag keeps the server-side default (perform the copy).
 			if f.Changed("copy-data") {
 				copyData, _ := f.GetBool("copy-data")
-				req.CopyData = &copyData
+				req.SkipCopyData = !copyData
 			}
 			resp, err := client.CreateMigration(cmd.Context(), req)
 			if err != nil {
 				return fmt.Errorf("failed to create migration: %w", err)
 			}
-			return printJSON(cmd, resp.GetMigration())
+			return printJSON(cmd, resp)
 		},
 	}
 	cmd.Flags().String("admin-server", "", "Address of the multiadmin server (overrides config)")
@@ -147,7 +172,7 @@ func AddStartMigrationCommand() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("failed to start migration: %w", err)
 			}
-			return printJSON(cmd, resp.GetMigration())
+			return printJSON(cmd, resp)
 		},
 	}
 	cmd.Flags().String("admin-server", "", "Address of the multiadmin server (overrides config)")
@@ -194,7 +219,7 @@ func AddUpdateMigrationCommand() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("failed to update migration: %w", err)
 			}
-			return printJSON(cmd, resp.GetMigration())
+			return printJSON(cmd, resp)
 		},
 	}
 	cmd.Flags().String("admin-server", "", "Address of the multiadmin server (overrides config)")
@@ -240,7 +265,7 @@ func AddActivateMigrationCommand() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("failed to activate migration: %w", err)
 			}
-			return printJSON(cmd, resp.GetMigration())
+			return printJSON(cmd, resp)
 		},
 	}
 	cmd.Flags().String("admin-server", "", "Address of the multiadmin server (overrides config)")
@@ -269,7 +294,7 @@ func AddDeactivateMigrationCommand() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("failed to deactivate migration: %w", err)
 			}
-			return printJSON(cmd, resp.GetMigration())
+			return printJSON(cmd, resp)
 		},
 	}
 	cmd.Flags().String("admin-server", "", "Address of the multiadmin server (overrides config)")
@@ -362,7 +387,7 @@ func AddDropMigrationCommand() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("failed to drop migration: %w", err)
 			}
-			return printJSON(cmd, resp.GetMigration())
+			return printJSON(cmd, resp)
 		},
 	}
 	cmd.Flags().String("admin-server", "", "Address of the multiadmin server (overrides config)")

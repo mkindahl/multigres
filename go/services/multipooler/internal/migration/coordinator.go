@@ -1463,12 +1463,18 @@ func phaseRank(p Phase) int {
 	}
 }
 
-// Projection is the redacted, operator-facing view of a migration: persisted
-// intent plus live status. It never carries the source DSN/credentials.
+// Projection is the operator-facing view of a migration: persisted intent
+// plus live status. Source holds the redacted host/db summary; SourceDSN
+// carries the full DSN for callers that intentionally need it (see its
+// comment).
 type Projection struct {
-	ID               int64
-	Name             string
-	Source           string // redacted host[:port]/db
+	ID     int64
+	Name   string
+	Source string // redacted host[:port]/db
+	// SourceDSN is the full, unredacted DSN (may include a password). Exposed to
+	// the migrator gRPC API as Migration.source_dsn — intentional for now while
+	// that API is only used by trusted operators.
+	SourceDSN        string
 	Phase            Phase
 	ActiveDirection  Direction
 	TargetDatabase   string
@@ -1496,6 +1502,7 @@ func (c *Coordinator) project(m *Migration, status *SubscriptionStatus) *Project
 		ID:               m.ID,
 		Name:             m.Name,
 		Source:           redactDSN(m.SourceDSN),
+		SourceDSN:        m.SourceDSN,
 		Phase:            m.Phase,
 		ActiveDirection:  directionOf(m.Phase),
 		TargetDatabase:   m.TargetDatabase,

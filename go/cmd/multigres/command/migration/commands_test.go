@@ -38,23 +38,31 @@ func runE(cmd *cobra.Command, args ...string) error {
 }
 
 func TestMarkersToSelection(t *testing.T) {
-	// "*" -> all_tables; "schema.*" -> a schema object; "schema.table" -> a table object.
-	all, objs := markersToSelection([]string{"*", "sales.*", "public.orders"})
-	require.True(t, all)
-	require.Len(t, objs, 2)
-	require.Equal(t, "sales", objs[0].GetSchema())
-	require.Equal(t, "public.orders", objs[1].GetTable().GetQualifiedName())
+	// "*" -> the all arm.
+	obj, err := markersToSelection([]string{"*"})
+	require.NoError(t, err)
+	require.True(t, obj.GetAll())
 
-	// No "*": all_tables stays false.
-	all, objs = markersToSelection([]string{"public.orders"})
-	require.False(t, all)
-	require.Len(t, objs, 1)
-	require.Equal(t, "public.orders", objs[0].GetTable().GetQualifiedName())
+	// "schema.*" markers fold into one SchemaSpec.
+	obj, err = markersToSelection([]string{"sales.*", "reporting.*"})
+	require.NoError(t, err)
+	require.Equal(t, []string{"sales", "reporting"}, obj.GetSchema().GetSchema())
+
+	// Plain "schema.table" markers fold into one TableSpec.
+	obj, err = markersToSelection([]string{"public.orders", "public.customers"})
+	require.NoError(t, err)
+	require.Equal(t, []string{"public.orders", "public.customers"}, obj.GetTable().GetQualifiedName())
+
+	// Mixing forms is rejected.
+	_, err = markersToSelection([]string{"*", "public.orders"})
+	require.ErrorContains(t, err, "cannot mix")
+	_, err = markersToSelection([]string{"sales.*", "public.orders"})
+	require.ErrorContains(t, err, "cannot mix")
 
 	// Empty input.
-	all, objs = markersToSelection(nil)
-	require.False(t, all)
-	require.Empty(t, objs)
+	obj, err = markersToSelection(nil)
+	require.NoError(t, err)
+	require.Nil(t, obj)
 }
 
 // TestCommandConstruction checks that each subcommand constructor wires its use

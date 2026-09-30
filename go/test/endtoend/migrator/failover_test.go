@@ -69,7 +69,7 @@ func TestTargetFailoverDuringMigration(t *testing.T) {
 
 	require.Eventually(t, func() bool {
 		resp, err := mt.GetMigrations(ctx, &migratorpb.GetMigrationsRequest{Id: id})
-		return err == nil && len(resp.GetMigrations()) == 1 && resp.GetMigrations()[0].GetCaughtUp()
+		return err == nil && len(resp.GetMigrations()) == 1 && resp.GetMigrations()[0].GetStatus().GetCaughtUp()
 	}, 60*time.Second, 500*time.Millisecond, "migration must catch up before failover")
 	mtClose()
 
@@ -98,8 +98,8 @@ func TestTargetFailoverDuringMigration(t *testing.T) {
 		if err != nil || len(resp.GetMigrations()) != 1 {
 			return false
 		}
-		t.Logf("post-failover phase=%s caught_up=%v err=%q", resp.GetMigrations()[0].GetPhase(),
-			resp.GetMigrations()[0].GetCaughtUp(), resp.GetMigrations()[0].GetLastError())
+		t.Logf("post-failover phase=%s caught_up=%v err=%q", resp.GetMigrations()[0].GetStatus().GetPhase(),
+			resp.GetMigrations()[0].GetStatus().GetCaughtUp(), resp.GetMigrations()[0].GetStatus().GetLastError())
 		return true
 	}, 60*time.Second, 500*time.Millisecond, "migration must be visible on the new primary")
 

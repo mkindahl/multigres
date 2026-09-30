@@ -129,7 +129,7 @@ func TestUpdateMigrationGuards(t *testing.T) {
 	})
 	require.NoError(t, err, "tables may be changed while CREATED")
 	require.ElementsMatch(t, []string{"public.orders", "public.items"},
-		updResp.GetMigration().GetTables(), "the widened selection must be re-resolved and stored")
+		updResp.GetMigration().GetObjects().GetTable().GetQualifiedName(), "the widened selection must be re-resolved and stored")
 
 	// Change the sequence margin while CREATED.
 	_, err = mt.UpdateMigration(ctx, &migratorpb.UpdateMigrationRequest{
@@ -144,7 +144,7 @@ func TestUpdateMigrationGuards(t *testing.T) {
 	require.NoError(t, err)
 	require.Eventually(t, func() bool {
 		resp, err := mt.GetMigrations(ctx, &migratorpb.GetMigrationsRequest{Id: id})
-		return err == nil && len(resp.GetMigrations()) == 1 && resp.GetMigrations()[0].GetCaughtUp()
+		return err == nil && len(resp.GetMigrations()) == 1 && resp.GetMigrations()[0].GetStatus().GetCaughtUp()
 	}, 60*time.Second, 500*time.Millisecond, "migration must catch up")
 
 	// List all migrations (GetMigrations with no id/name): the streaming migration
@@ -153,7 +153,7 @@ func TestUpdateMigrationGuards(t *testing.T) {
 	require.NoError(t, err, "listing all migrations must succeed")
 	var found bool
 	for _, m := range listResp.GetMigrations() {
-		if m.GetId() == id {
+		if m.GetMigration().GetId() == id {
 			found = true
 		}
 	}

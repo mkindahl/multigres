@@ -69,7 +69,7 @@ func TestActivateDeactivateMigration(t *testing.T) {
 
 	require.Eventually(t, func() bool {
 		resp, err := mt.GetMigrations(ctx, &migratorpb.GetMigrationsRequest{Id: id})
-		return err == nil && len(resp.GetMigrations()) == 1 && resp.GetMigrations()[0].GetCaughtUp()
+		return err == nil && len(resp.GetMigrations()) == 1 && resp.GetMigrations()[0].GetStatus().GetCaughtUp()
 	}, 60*time.Second, 500*time.Millisecond, "IMPORT must catch up")
 
 	tc := targetConn(t, ctx, primary, targetDB)
@@ -78,7 +78,7 @@ func TestActivateDeactivateMigration(t *testing.T) {
 	// Activate (switch to EXPORT): Multigres becomes the source of truth.
 	exportResp, err := mt.ActivateMigration(ctx, &migratorpb.ActivateMigrationRequest{Id: id})
 	require.NoError(t, err)
-	require.Equal(t, migratorpb.MigrationDirection_MIGRATION_DIRECTION_EXPORT, exportResp.GetMigration().GetActiveDirection())
+	require.Equal(t, migratorpb.MigrationDirection_MIGRATION_DIRECTION_EXPORT, exportResp.GetStatus().GetActiveDirection())
 
 	// A write on the Multigres target must reach the old database.
 	_, err = tc.Query(ctx, "INSERT INTO public.orders (v) VALUES ('x')")
@@ -94,7 +94,7 @@ func TestActivateDeactivateMigration(t *testing.T) {
 	// Deactivate (switch back to IMPORT): the old database is the source of truth again.
 	importResp, err := mt.DeactivateMigration(ctx, &migratorpb.DeactivateMigrationRequest{Id: id})
 	require.NoError(t, err)
-	require.Equal(t, migratorpb.MigrationDirection_MIGRATION_DIRECTION_IMPORT, importResp.GetMigration().GetActiveDirection())
+	require.Equal(t, migratorpb.MigrationDirection_MIGRATION_DIRECTION_IMPORT, importResp.GetStatus().GetActiveDirection())
 
 	// A write on the old database must reach the Multigres target again.
 	sc := dialSource(t, ctx, srcPort)

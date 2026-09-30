@@ -161,7 +161,7 @@ func TestGracefulDropDrainFailurePreservesServing(t *testing.T) {
 	resp, err := mt.GetMigrations(ctx, &migratorpb.GetMigrationsRequest{Id: id})
 	require.NoError(t, err, "the migration must survive a failed drain")
 	require.Equal(t, migratorpb.MigrationPhase_MIGRATION_PHASE_EXPORTING,
-		resp.GetMigrations()[0].GetPhase(), "phase must be rolled back to EXPORTING")
+		resp.GetMigrations()[0].GetStatus().GetPhase(), "phase must be rolled back to EXPORTING")
 
 	// Recover the link and drop again — now it completes.
 	sc = dialSource(t, ctx, srcPort)
@@ -193,13 +193,13 @@ func activatedMigration(t *testing.T, ctx context.Context, mt migratorpb.Migrato
 	require.NoError(t, err)
 	require.Eventually(t, func() bool {
 		resp, err := mt.GetMigrations(ctx, &migratorpb.GetMigrationsRequest{Id: id})
-		return err == nil && len(resp.GetMigrations()) == 1 && resp.GetMigrations()[0].GetCaughtUp()
+		return err == nil && len(resp.GetMigrations()) == 1 && resp.GetMigrations()[0].GetStatus().GetCaughtUp()
 	}, 60*time.Second, 500*time.Millisecond, "IMPORT must catch up")
 
 	exportResp, err := mt.ActivateMigration(ctx, &migratorpb.ActivateMigrationRequest{Id: id})
 	require.NoError(t, err)
 	require.Equal(t, migratorpb.MigrationDirection_MIGRATION_DIRECTION_EXPORT,
-		exportResp.GetMigration().GetActiveDirection(), "activate must switch to EXPORT")
+		exportResp.GetStatus().GetActiveDirection(), "activate must switch to EXPORT")
 	return id
 }
 

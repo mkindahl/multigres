@@ -29,10 +29,8 @@ import (
 // gateway SQL surface:
 //   - a user-supplied unique name that addresses the migration (start/get/drop by
 //     name) in place of the generated id, and a duplicate-name rejection;
-//   - copy_data=false + skip_schema_copy: the target schema is seeded out-of-band
-//     and no initial COPY runs, so only streamed changes apply;
-//   - a typed "not yet supported" error for a per-table clause the backend cannot
-//     yet honor (here a TableSpec WHERE row filter).
+//   - skip_copy_data + skip_schema_copy: the target schema is seeded out-of-band
+//     and no initial COPY runs, so only streamed changes apply.
 func TestNamedMigrationAndOptions(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping Multigres Migrator e2e in short mode")
@@ -51,7 +49,7 @@ func TestNamedMigrationAndOptions(t *testing.T) {
 	srcPort := startStandaloneSource(t)
 	seedSource(t, ctx, srcPort) // source has 3 rows in public.orders
 
-	// Seed the target schema out-of-band (empty table) so copy_data=false +
+	// Seed the target schema out-of-band (empty table) so skip_copy_data +
 	// skip_schema_copy has a table to stream into. Only the id PK is needed on the
 	// subscriber; streamed rows carry the source-generated id.
 	tc := targetConn(t, ctx, primary, targetDB)
@@ -62,24 +60,12 @@ func TestNamedMigrationAndOptions(t *testing.T) {
 	mt, mtClose := migrationClient(t, primary)
 	defer mtClose()
 
-	// A per-table WHERE is accepted on the wire but not yet backed: it must fail
-	// with an actionable "not yet supported" error, not silently drop the clause.
-	_, err = mt.CreateMigration(ctx, &migratorpb.CreateMigrationRequest{
-		SourceDsn:      sourceDSN(srcPort),
-		TargetDatabase: targetDB,
-		Objects: []*migratorpb.SelectionObject{{Object: &migratorpb.SelectionObject_Table{
-			Table: &migratorpb.TableSpec{QualifiedName: "public.orders", Where: "id > 0"},
-		}}},
-	})
-	require.ErrorContains(t, err, "not yet supported")
-
-	copyData := false
 	createResp, err := mt.CreateMigration(ctx, &migratorpb.CreateMigrationRequest{
 		SourceDsn:      sourceDSN(srcPort),
 		TargetDatabase: targetDB,
 		Name:           "nightly",
 		Objects:        objs("public.orders"),
-		CopyData:       &copyData,
+		SkipCopyData:   true,
 		SkipSchemaCopy: true,
 	})
 	require.NoError(t, err)
@@ -106,14 +92,14 @@ func TestNamedMigrationAndOptions(t *testing.T) {
 			return false
 		}
 		m := resp.GetMigrations()[0]
-		require.Equal(t, id, m.GetId(), "lookup by name must resolve to the same migration")
-		return m.GetCaughtUp()
+		require.Equal(t, id, m.GetMigration().GetId(), "lookup by name must resolve to the same migration")
+		return m.GetStatus().GetCaughtUp()
 	}, 60*time.Second, 500*time.Millisecond, "migration must catch up")
 
-	// copy_data=false: the 3 pre-existing source rows were NOT copied.
+	// skip_copy_data: the 3 pre-existing source rows were NOT copied.
 	n, ok := countRows(t, ctx, tc, "public.orders")
 	require.True(t, ok)
-	require.Equal(t, 0, n, "copy_data=false must not run the initial COPY")
+	require.Equal(t, 0, n, "skip_copy_data must not run the initial COPY")
 
 	// Streaming still works: a new source row reaches the target.
 	sc := dialSource(t, ctx, srcPort)

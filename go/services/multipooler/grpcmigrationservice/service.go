@@ -56,32 +56,13 @@ func (s *migrationService) CreateMigration(ctx context.Context, req *migratorpb.
 	if err != nil {
 		return nil, toGRPC(err)
 	}
-	// Reject options the backend cannot yet honor with a typed feature_not_supported
-	// (SQLSTATE 0A000), so a caller shipping the full grammar surfaces an actionable
-	// message rather than having the clause silently dropped.
-	if req.SourcePublication != "" {
-		return nil, toGRPC(mterrors.NewFeatureNotSupported(
-			"migrator: source_publication (reusing a pre-created publication) is not yet supported"))
-	}
-	if req.PublishViaPartitionRoot {
-		return nil, toGRPC(mterrors.NewFeatureNotSupported(
-			"migrator: publish_via_partition_root is not yet supported"))
-	}
-	tables, err := foldTableSelection(req)
-	if err != nil {
-		return nil, toGRPC(err)
-	}
-	copyData := true // default when unset
-	if req.CopyData != nil {
-		copyData = *req.CopyData
-	}
 	proj, err := coord.CreateMigration(ctx, migration.CreateParams{
 		SourceDSN:      req.SourceDsn,
 		TargetDatabase: req.TargetDatabase,
 		TargetShard:    req.TargetShard,
 		Name:           req.Name,
-		Tables:         tables,
-		CopyData:       copyData,
+		Tables:         foldTableSelection(req.Objects),
+		CopyData:       !req.SkipCopyData,
 		SkipSchemaCopy: req.SkipSchemaCopy,
 		SequenceMargin: req.SequenceMargin,
 		QuiesceRoles:   req.QuiesceRoles,
@@ -89,41 +70,36 @@ func (s *migrationService) CreateMigration(ctx context.Context, req *migratorpb.
 	if err != nil {
 		return nil, toGRPC(err)
 	}
-	return &migratorpb.CreateMigrationResponse{Migration: projToProto(proj)}, nil
+	return &migratorpb.CreateMigrationResponse{Migration: migToProto(proj), Status: statusToProto(proj)}, nil
 }
 
-// foldTableSelection folds the structured selection (all_tables plus the
-// heterogeneous objects list) into the flat pattern list the coordinator
-// resolves: "*" (all owned tables), "schema.*" (all owned tables in a schema),
-// or "schema.table". all_tables and objects are unioned (the resolver
-// de-duplicates). A table object carrying a column list or WHERE filter is
-// rejected with a typed feature_not_supported error (those clauses are not yet
-// backed). include_descendants (the default for a bare `FOR TABLE <t>`, without
-// ONLY) is accepted — it is a no-op for an ordinary table; a table that is
-// actually partitioned is rejected later, at source validation, where the catalog
-// relkind is known (partition fan-out is not yet supported).
-func foldTableSelection(req *migratorpb.CreateMigrationRequest) ([]string, error) {
-	var patterns []string
-	if req.AllTables {
-		patterns = append(patterns, "*")
+// foldTableSelection folds the structured selection (a table list, a schema
+// list, or all tables owned by the source role) into the flat pattern list the
+// coordinator resolves: "*" (all owned tables), "schema.*" (all owned tables in
+// a schema), or "schema.table". A nil objects, or an "all" arm explicitly set to
+// false, yields no patterns — CreateMigration then rejects the request for
+// selecting no tables.
+func foldTableSelection(objects *migratorpb.SelectionObject) []string {
+	if objects == nil {
+		return nil
 	}
-	for _, obj := range req.Objects {
-		switch o := obj.GetObject().(type) {
-		case *migratorpb.SelectionObject_Schema:
-			patterns = append(patterns, o.Schema+".*")
-		case *migratorpb.SelectionObject_Table:
-			ts := o.Table
-			if len(ts.Columns) > 0 || ts.Where != "" {
-				return nil, mterrors.NewFeatureNotSupported(
-					"migrator: per-table column lists and WHERE row filters are not yet supported")
-			}
-			patterns = append(patterns, ts.QualifiedName)
-		default:
-			return nil, mterrors.NewFeatureNotSupported(
-				"migrator: a selection object must set either a table or a schema")
+	switch o := objects.GetObject().(type) {
+	case *migratorpb.SelectionObject_All:
+		if !o.All {
+			return nil
 		}
+		return []string{"*"}
+	case *migratorpb.SelectionObject_Schema:
+		patterns := make([]string, 0, len(o.Schema.GetSchema()))
+		for _, s := range o.Schema.GetSchema() {
+			patterns = append(patterns, s+".*")
+		}
+		return patterns
+	case *migratorpb.SelectionObject_Table:
+		return o.Table.GetQualifiedName()
+	default:
+		return nil
 	}
-	return patterns, nil
 }
 
 // migrationRef picks the addressing key from a request: the explicit id when
@@ -141,7 +117,7 @@ func (s *migrationService) StartMigration(ctx context.Context, req *migratorpb.S
 	if err != nil {
 		return nil, toGRPC(err)
 	}
-	return &migratorpb.StartMigrationResponse{Migration: projToProto(proj)}, nil
+	return &migratorpb.StartMigrationResponse{Migration: migToProto(proj), Status: statusToProto(proj)}, nil
 }
 
 func (s *migrationService) GetMigrations(ctx context.Context, req *migratorpb.GetMigrationsRequest) (*migratorpb.GetMigrationsResponse, error) {
@@ -154,15 +130,15 @@ func (s *migrationService) GetMigrations(ctx context.Context, req *migratorpb.Ge
 		if err != nil {
 			return nil, toGRPC(err)
 		}
-		return &migratorpb.GetMigrationsResponse{Migrations: []*migratorpb.Migration{projToProto(proj)}}, nil
+		return &migratorpb.GetMigrationsResponse{Migrations: []*migratorpb.MigrationInfo{infoToProto(proj)}}, nil
 	}
 	projs, err := coord.ListMigrations(ctx)
 	if err != nil {
 		return nil, toGRPC(err)
 	}
-	out := make([]*migratorpb.Migration, len(projs))
+	out := make([]*migratorpb.MigrationInfo, len(projs))
 	for i, p := range projs {
-		out[i] = projToProto(p)
+		out[i] = infoToProto(p)
 	}
 	return &migratorpb.GetMigrationsResponse{Migrations: out}, nil
 }
@@ -196,7 +172,7 @@ func (s *migrationService) DropMigration(ctx context.Context, req *migratorpb.Dr
 	if err != nil {
 		return nil, toGRPC(err)
 	}
-	return &migratorpb.DropMigrationResponse{Migration: projToProto(proj)}, nil
+	return &migratorpb.DropMigrationResponse{Migration: migToProto(proj), Status: statusToProto(proj)}, nil
 }
 
 func (s *migrationService) UpdateMigration(ctx context.Context, req *migratorpb.UpdateMigrationRequest) (*migratorpb.UpdateMigrationResponse, error) {
@@ -227,7 +203,7 @@ func (s *migrationService) UpdateMigration(ctx context.Context, req *migratorpb.
 	if err != nil {
 		return nil, toGRPC(err)
 	}
-	return &migratorpb.UpdateMigrationResponse{Migration: projToProto(proj)}, nil
+	return &migratorpb.UpdateMigrationResponse{Migration: migToProto(proj), Status: statusToProto(proj)}, nil
 }
 
 func (s *migrationService) ActivateMigration(ctx context.Context, req *migratorpb.ActivateMigrationRequest) (*migratorpb.ActivateMigrationResponse, error) {
@@ -243,7 +219,7 @@ func (s *migrationService) ActivateMigration(ctx context.Context, req *migratorp
 	if err != nil {
 		return nil, toGRPC(err)
 	}
-	return &migratorpb.ActivateMigrationResponse{Migration: projToProto(proj)}, nil
+	return &migratorpb.ActivateMigrationResponse{Migration: migToProto(proj), Status: statusToProto(proj)}, nil
 }
 
 func (s *migrationService) DeactivateMigration(ctx context.Context, req *migratorpb.DeactivateMigrationRequest) (*migratorpb.DeactivateMigrationResponse, error) {
@@ -255,7 +231,7 @@ func (s *migrationService) DeactivateMigration(ctx context.Context, req *migrato
 	if err != nil {
 		return nil, toGRPC(err)
 	}
-	return &migratorpb.DeactivateMigrationResponse{Migration: projToProto(proj)}, nil
+	return &migratorpb.DeactivateMigrationResponse{Migration: migToProto(proj), Status: statusToProto(proj)}, nil
 }
 
 // toGRPC maps coordinator errors to gRPC status errors.
@@ -269,30 +245,61 @@ func toGRPC(err error) error {
 	return mterrors.ToGRPC(err)
 }
 
-func projToProto(p *migration.Projection) *migratorpb.Migration {
-	m := &migratorpb.Migration{
+// migToProto maps a projection to its static Migration configuration. Objects
+// reports the concrete tables resolved at create time (wildcards are already
+// expanded), regardless of whether the request selected them by table list,
+// schema list, or "all".
+func migToProto(p *migration.Projection) *migratorpb.Migration {
+	return &migratorpb.Migration{
+		Id:             p.ID,
+		Name:           p.Name,
+		SourceDsn:      p.SourceDSN,
+		TargetDatabase: p.TargetDatabase,
+		TargetShard:    p.TargetShard,
+		Objects:        tablesToSelectionObject(p.Tables),
+	}
+}
+
+func tablesToSelectionObject(tables []string) *migratorpb.SelectionObject {
+	if len(tables) == 0 {
+		return nil
+	}
+	return &migratorpb.SelectionObject{
+		Object: &migratorpb.SelectionObject_Table{
+			Table: &migratorpb.TableSpec{QualifiedName: tables},
+		},
+	}
+}
+
+// statusToProto maps a projection to its live MigrationStatus.
+func statusToProto(p *migration.Projection) *migratorpb.MigrationStatus {
+	s := &migratorpb.MigrationStatus{
 		Id:               p.ID,
-		Name:             p.Name,
-		Source:           p.Source,
-		TargetDatabase:   p.TargetDatabase,
-		TargetShard:      p.TargetShard,
-		Tables:           p.Tables,
 		Phase:            phaseToProto(p.Phase),
-		ActiveDirection:  dirToProto(p.ActiveDirection),
 		LastError:        p.LastError,
 		TotalRelations:   p.TotalRelations,
 		ReadyRelations:   p.ReadyRelations,
 		CaughtUp:         p.CaughtUp,
 		PublicationName:  p.PublicationName,
 		SubscriptionName: p.SubscriptionName,
+		CreatedAt:        timestamppb.New(p.CreatedAt),
+		ActiveDirection:  dirToProto(p.ActiveDirection),
 		LagBytes:         p.LagBytes,
 		LagSeconds:       p.LagSeconds,
-		CreatedAt:        timestamppb.New(p.CreatedAt),
 	}
 	if p.StreamingSince != nil {
-		m.StreamingSince = timestamppb.New(*p.StreamingSince)
+		s.StreamingSince = timestamppb.New(*p.StreamingSince)
 	}
-	return m
+	return s
+}
+
+// infoToProto pairs a projection's static configuration with its live status,
+// for the RPCs that return more than one migration at a time.
+func infoToProto(p *migration.Projection) *migratorpb.MigrationInfo {
+	return &migratorpb.MigrationInfo{
+		Migration: migToProto(p),
+		Status:    statusToProto(p),
+	}
 }
 
 // journalEntryToProto maps a coordinator journal entry to its proto form. The
