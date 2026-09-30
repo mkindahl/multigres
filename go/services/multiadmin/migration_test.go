@@ -45,7 +45,7 @@ type fakeMigratorServer struct {
 
 func (f *fakeMigratorServer) CreateMigration(_ context.Context, in *migratorpb.CreateMigrationRequest) (*migratorpb.CreateMigrationResponse, error) {
 	f.create = in
-	return &migratorpb.CreateMigrationResponse{Migration: &migratorpb.Migration{Name: in.GetName()}}, nil
+	return &migratorpb.CreateMigrationResponse{Migration: &migratorpb.Migration{Name: in.GetMigration().GetName()}}, nil
 }
 
 func (f *fakeMigratorServer) StartMigration(_ context.Context, in *migratorpb.StartMigrationRequest) (*migratorpb.StartMigrationResponse, error) {
@@ -115,11 +115,11 @@ func TestMultiadminMigrationForwarders(t *testing.T) {
 	server.migrationDialer = dialer
 
 	t.Run("CreateMigration", func(t *testing.T) {
-		resp, err := server.CreateMigration(ctx, &migratorpb.CreateMigrationRequest{Name: "m1"})
+		resp, err := server.CreateMigration(ctx, &migratorpb.CreateMigrationRequest{Migration: &migratorpb.Migration{Name: "m1"}})
 		require.NoError(t, err)
 		assert.Equal(t, "m1", resp.GetMigration().GetName())
 		require.NotNil(t, fake.create)
-		assert.Equal(t, "m1", fake.create.GetName())
+		assert.Equal(t, "m1", fake.create.GetMigration().GetName())
 	})
 	t.Run("StartMigration", func(t *testing.T) {
 		_, err := server.StartMigration(ctx, &migratorpb.StartMigrationRequest{Id: 1})
@@ -157,7 +157,7 @@ func TestMultiadminMigrationForwarders(t *testing.T) {
 // so a shared failure mode can be asserted across all of them.
 func callAllForwarders(ctx context.Context, s *MultiadminServer) []error {
 	return []error{
-		firstErr(s.CreateMigration(ctx, &migratorpb.CreateMigrationRequest{Name: "m1"})),
+		firstErr(s.CreateMigration(ctx, &migratorpb.CreateMigrationRequest{Migration: &migratorpb.Migration{Name: "m1"}})),
 		firstErr(s.StartMigration(ctx, &migratorpb.StartMigrationRequest{Id: 1})),
 		firstErr(s.UpdateMigration(ctx, &migratorpb.UpdateMigrationRequest{Id: 1})),
 		firstErr(s.ActivateMigration(ctx, &migratorpb.ActivateMigrationRequest{Id: 1})),

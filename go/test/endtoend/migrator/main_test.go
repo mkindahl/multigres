@@ -48,7 +48,7 @@ const sourcePassword = "srcpass"
 // common case for the migration tests. For "*" / "schema.*" markers use sel.
 func objs(names ...string) *migratorpb.SelectionObject {
 	return &migratorpb.SelectionObject{Object: &migratorpb.SelectionObject_Table{
-		Table: &migratorpb.TableSpec{QualifiedName: names},
+		Table: &migratorpb.TableSpec{QualifiedNames: names},
 	}}
 }
 
@@ -84,11 +84,11 @@ func sel(markers ...string) *migratorpb.SelectionObject {
 		return &migratorpb.SelectionObject{Object: &migratorpb.SelectionObject_All{All: true}}
 	case len(tables) > 0:
 		return &migratorpb.SelectionObject{Object: &migratorpb.SelectionObject_Table{
-			Table: &migratorpb.TableSpec{QualifiedName: tables},
+			Table: &migratorpb.TableSpec{QualifiedNames: tables},
 		}}
 	case len(schemas) > 0:
 		return &migratorpb.SelectionObject{Object: &migratorpb.SelectionObject_Schema{
-			Schema: &migratorpb.SchemaSpec{Schema: schemas},
+			Schema: &migratorpb.SchemaSpec{Schemata: schemas},
 		}}
 	default:
 		return nil

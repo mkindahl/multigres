@@ -173,13 +173,13 @@ func (MigrationDirection) EnumDescriptor() ([]byte, []int) {
 }
 
 // TableSpec selects tables for a migration, mirroring one CREATE PUBLICATION
-// "FOR TABLE" entry. qualified_name is the list of (optionally qualified) table names.
+// "FOR TABLE" entry. qualified_names are the (optionally schema-qualified)
+// table names ("schema.table").
 type TableSpec struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	// qualified_name is the schema-qualified table name ("schema.table").
-	QualifiedName []string `protobuf:"bytes,1,rep,name=qualified_name,json=qualifiedName,proto3" json:"qualified_name,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	QualifiedNames []string               `protobuf:"bytes,1,rep,name=qualified_names,json=qualifiedNames,proto3" json:"qualified_names,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *TableSpec) Reset() {
@@ -212,9 +212,9 @@ func (*TableSpec) Descriptor() ([]byte, []int) {
 	return file_migratorservice_proto_rawDescGZIP(), []int{0}
 }
 
-func (x *TableSpec) GetQualifiedName() []string {
+func (x *TableSpec) GetQualifiedNames() []string {
 	if x != nil {
-		return x.QualifiedName
+		return x.QualifiedNames
 	}
 	return nil
 }
@@ -223,7 +223,7 @@ func (x *TableSpec) GetQualifiedName() []string {
 // FOR TABLES IN SCHEMA name [, ...] construction.
 type SchemaSpec struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Schema        []string               `protobuf:"bytes,1,rep,name=schema,proto3" json:"schema,omitempty"`
+	Schemata      []string               `protobuf:"bytes,1,rep,name=schemata,proto3" json:"schemata,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -258,9 +258,9 @@ func (*SchemaSpec) Descriptor() ([]byte, []int) {
 	return file_migratorservice_proto_rawDescGZIP(), []int{1}
 }
 
-func (x *SchemaSpec) GetSchema() []string {
+func (x *SchemaSpec) GetSchemata() []string {
 	if x != nil {
-		return x.Schema
+		return x.Schemata
 	}
 	return nil
 }
@@ -911,21 +911,10 @@ func (x *GetMigrationJournalResponse) GetEntries() []*MigrationJournalEntry {
 }
 
 type CreateMigrationRequest struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	// name is an optional, human-friendly identifier, unique per target database.
-	// When set it can address the migration in place of the generated id.
-	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	// source_dsn is a full libpq conninfo to the standalone source postgres (may
-	// include TLS options). Round-tripped as-is in Migration; see the comment
-	// there.
-	SourceDsn      string `protobuf:"bytes,2,opt,name=source_dsn,json=sourceDsn,proto3" json:"source_dsn,omitempty"`
-	TargetDatabase string `protobuf:"bytes,3,opt,name=target_database,json=targetDatabase,proto3" json:"target_database,omitempty"`
-	TargetShard    string `protobuf:"bytes,4,opt,name=target_shard,json=targetShard,proto3" json:"target_shard,omitempty"`
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	Migration *Migration             `protobuf:"bytes,1,opt,name=migration,proto3" json:"migration,omitempty"`
 	// sequence_margin is added past each sequence's max at a direction switch.
 	SequenceMargin int64 `protobuf:"varint,5,opt,name=sequence_margin,json=sequenceMargin,proto3" json:"sequence_margin,omitempty"`
-	// objects is the migration's table selection: a table list, a schema list,
-	// or all tables owned by the source role. See SelectionObject.
-	Objects *SelectionObject `protobuf:"bytes,6,opt,name=objects,proto3" json:"objects,omitempty"`
 	// skip_copy_data skips the initial COPY at subscription setup (the data is
 	// assumed to be seeded out-of-band). false (the default) performs the
 	// initial COPY.
@@ -975,32 +964,11 @@ func (*CreateMigrationRequest) Descriptor() ([]byte, []int) {
 	return file_migratorservice_proto_rawDescGZIP(), []int{9}
 }
 
-func (x *CreateMigrationRequest) GetName() string {
+func (x *CreateMigrationRequest) GetMigration() *Migration {
 	if x != nil {
-		return x.Name
+		return x.Migration
 	}
-	return ""
-}
-
-func (x *CreateMigrationRequest) GetSourceDsn() string {
-	if x != nil {
-		return x.SourceDsn
-	}
-	return ""
-}
-
-func (x *CreateMigrationRequest) GetTargetDatabase() string {
-	if x != nil {
-		return x.TargetDatabase
-	}
-	return ""
-}
-
-func (x *CreateMigrationRequest) GetTargetShard() string {
-	if x != nil {
-		return x.TargetShard
-	}
-	return ""
+	return nil
 }
 
 func (x *CreateMigrationRequest) GetSequenceMargin() int64 {
@@ -1008,13 +976,6 @@ func (x *CreateMigrationRequest) GetSequenceMargin() int64 {
 		return x.SequenceMargin
 	}
 	return 0
-}
-
-func (x *CreateMigrationRequest) GetObjects() *SelectionObject {
-	if x != nil {
-		return x.Objects
-	}
-	return nil
 }
 
 func (x *CreateMigrationRequest) GetSkipCopyData() bool {
@@ -1816,12 +1777,12 @@ var File_migratorservice_proto protoreflect.FileDescriptor
 
 const file_migratorservice_proto_rawDesc = "" +
 	"\n" +
-	"\x15migratorservice.proto\x12\bmigrator\x1a google/protobuf/field_mask.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"2\n" +
-	"\tTableSpec\x12%\n" +
-	"\x0equalified_name\x18\x01 \x03(\tR\rqualifiedName\"$\n" +
+	"\x15migratorservice.proto\x12\bmigrator\x1a google/protobuf/field_mask.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"4\n" +
+	"\tTableSpec\x12'\n" +
+	"\x0fqualified_names\x18\x01 \x03(\tR\x0equalifiedNames\"(\n" +
 	"\n" +
-	"SchemaSpec\x12\x16\n" +
-	"\x06schema\x18\x01 \x03(\tR\x06schema\"\x8c\x01\n" +
+	"SchemaSpec\x12\x1a\n" +
+	"\bschemata\x18\x01 \x03(\tR\bschemata\"\x8c\x01\n" +
 	"\x0fSelectionObject\x12+\n" +
 	"\x05table\x18\x01 \x01(\v2\x13.migrator.TableSpecH\x00R\x05table\x12.\n" +
 	"\x06schema\x18\x02 \x01(\v2\x14.migrator.SchemaSpecH\x00R\x06schema\x12\x12\n" +
@@ -1875,15 +1836,10 @@ const file_migratorservice_proto_rawDesc = "" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\"X\n" +
 	"\x1bGetMigrationJournalResponse\x129\n" +
-	"\aentries\x18\x01 \x03(\v2\x1f.migrator.MigrationJournalEntryR\aentries\"\xea\x02\n" +
-	"\x16CreateMigrationRequest\x12\x12\n" +
-	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1d\n" +
-	"\n" +
-	"source_dsn\x18\x02 \x01(\tR\tsourceDsn\x12'\n" +
-	"\x0ftarget_database\x18\x03 \x01(\tR\x0etargetDatabase\x12!\n" +
-	"\ftarget_shard\x18\x04 \x01(\tR\vtargetShard\x12'\n" +
-	"\x0fsequence_margin\x18\x05 \x01(\x03R\x0esequenceMargin\x123\n" +
-	"\aobjects\x18\x06 \x01(\v2\x19.migrator.SelectionObjectR\aobjects\x12$\n" +
+	"\aentries\x18\x01 \x03(\v2\x1f.migrator.MigrationJournalEntryR\aentries\"\xe9\x01\n" +
+	"\x16CreateMigrationRequest\x121\n" +
+	"\tmigration\x18\x01 \x01(\v2\x13.migrator.MigrationR\tmigration\x12'\n" +
+	"\x0fsequence_margin\x18\x05 \x01(\x03R\x0esequenceMargin\x12$\n" +
 	"\x0eskip_copy_data\x18\a \x01(\bR\fskipCopyData\x12(\n" +
 	"\x10skip_schema_copy\x18\b \x01(\bR\x0eskipSchemaCopy\x12#\n" +
 	"\rquiesce_roles\x18\t \x03(\tR\fquiesceRoles\"\x7f\n" +
@@ -2024,7 +1980,7 @@ var file_migratorservice_proto_depIdxs = []int32{
 	1,  // 10: migrator.MigrationJournalEntry.direction:type_name -> migrator.MigrationDirection
 	25, // 11: migrator.MigrationJournalEntry.created_at:type_name -> google.protobuf.Timestamp
 	8,  // 12: migrator.GetMigrationJournalResponse.entries:type_name -> migrator.MigrationJournalEntry
-	4,  // 13: migrator.CreateMigrationRequest.objects:type_name -> migrator.SelectionObject
+	5,  // 13: migrator.CreateMigrationRequest.migration:type_name -> migrator.Migration
 	5,  // 14: migrator.CreateMigrationResponse.migration:type_name -> migrator.Migration
 	6,  // 15: migrator.CreateMigrationResponse.status:type_name -> migrator.MigrationStatus
 	26, // 16: migrator.UpdateMigrationRequest.update_mask:type_name -> google.protobuf.FieldMask

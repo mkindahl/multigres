@@ -93,10 +93,12 @@ func TestMigrationJournalLifecycle(t *testing.T) {
 	defer mtClose()
 
 	createResp, err := mt.CreateMigration(ctx, &migratorpb.CreateMigrationRequest{
-		SourceDsn:      sourceDSN(srcPort),
-		TargetDatabase: targetDB,
-		Name:           "ledger",
-		Objects:        objs("public.orders"),
+		Migration: &migratorpb.Migration{
+			SourceDsn:      sourceDSN(srcPort),
+			TargetDatabase: targetDB,
+			Name:           "ledger",
+			Objects:        objs("public.orders"),
+		},
 	})
 	require.NoError(t, err)
 	id := createResp.GetMigration().GetId()

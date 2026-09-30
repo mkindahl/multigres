@@ -101,9 +101,11 @@ func TestCreateMigrationTableResolution(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			resp, err := mt.CreateMigration(ctx, &migratorpb.CreateMigrationRequest{
-				SourceDsn:      sourceDSN(srcPort),
-				TargetDatabase: targetDB,
-				Objects:        sel(tc.tables...),
+				Migration: &migratorpb.Migration{
+					SourceDsn:      sourceDSN(srcPort),
+					TargetDatabase: targetDB,
+					Objects:        sel(tc.tables...),
+				},
 			})
 			if tc.errContains != "" {
 				require.Error(t, err)
@@ -122,7 +124,7 @@ func TestCreateMigrationTableResolution(t *testing.T) {
 			// compare as a set. The response always reports the resolved
 			// selection as a concrete table list, regardless of how it was
 			// selected (wildcard, schema, or explicit names).
-			require.ElementsMatch(t, tc.want, resp.GetMigration().GetObjects().GetTable().GetQualifiedName())
+			require.ElementsMatch(t, tc.want, resp.GetMigration().GetObjects().GetTable().GetQualifiedNames())
 		})
 	}
 }

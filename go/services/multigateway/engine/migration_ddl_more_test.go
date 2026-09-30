@@ -314,14 +314,14 @@ func TestMigrationDDLHelpers_selectionObjects(t *testing.T) {
 	tbl2 := ast.NewPublicationObjSpecTable(ast.PUBLICATIONOBJ_TABLE, ast.NewPublicationTable(rel2, nil, nil))
 	obj, err := selectionObjects(ast.NewNodeList(tbl1, ast.NewString("skip"), tbl2))
 	require.NoError(t, err)
-	assert.Equal(t, []string{"public.orders", "public.items"}, obj.GetTable().GetQualifiedName())
+	assert.Equal(t, []string{"public.orders", "public.items"}, obj.GetTable().GetQualifiedNames())
 
 	// Multiple schema entries fold into one SchemaSpec.
 	schema1 := ast.NewPublicationObjSpecName(ast.PUBLICATIONOBJ_TABLES_IN_SCHEMA, "sales")
 	schema2 := ast.NewPublicationObjSpecName(ast.PUBLICATIONOBJ_TABLES_IN_SCHEMA, "reporting")
 	obj, err = selectionObjects(ast.NewNodeList(schema1, schema2))
 	require.NoError(t, err)
-	assert.Equal(t, []string{"sales", "reporting"}, obj.GetSchema().GetSchema())
+	assert.Equal(t, []string{"sales", "reporting"}, obj.GetSchema().GetSchemata())
 
 	// Mixing a table and a schema entry is rejected — a migration's FOR clause is
 	// one form or the other, mirroring CREATE PUBLICATION.

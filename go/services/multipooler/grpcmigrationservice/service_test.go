@@ -41,14 +41,14 @@ func TestFoldTableSelection(t *testing.T) {
 
 	t.Run("schema list", func(t *testing.T) {
 		got := foldTableSelection(&migratorpb.SelectionObject{Object: &migratorpb.SelectionObject_Schema{
-			Schema: &migratorpb.SchemaSpec{Schema: []string{"sales", "reporting"}},
+			Schema: &migratorpb.SchemaSpec{Schemata: []string{"sales", "reporting"}},
 		}})
 		require.Equal(t, []string{"sales.*", "reporting.*"}, got)
 	})
 
 	t.Run("table list", func(t *testing.T) {
 		got := foldTableSelection(&migratorpb.SelectionObject{Object: &migratorpb.SelectionObject_Table{
-			Table: &migratorpb.TableSpec{QualifiedName: []string{"public.orders", "public.customers"}},
+			Table: &migratorpb.TableSpec{QualifiedNames: []string{"public.orders", "public.customers"}},
 		}})
 		require.Equal(t, []string{"public.orders", "public.customers"}, got)
 	})
@@ -100,7 +100,7 @@ func TestMigToProto(t *testing.T) {
 	require.Equal(t, "host=h port=5432 dbname=db password=s3cr3t", got.GetSourceDsn())
 	require.Equal(t, "db", got.GetTargetDatabase())
 	require.Equal(t, "0", got.GetTargetShard())
-	require.Equal(t, []string{"public.orders"}, got.GetObjects().GetTable().GetQualifiedName())
+	require.Equal(t, []string{"public.orders"}, got.GetObjects().GetTable().GetQualifiedNames())
 
 	require.Nil(t, migToProto(&migration.Projection{ID: 2}).GetObjects(), "no resolved tables yields no SelectionObject")
 }

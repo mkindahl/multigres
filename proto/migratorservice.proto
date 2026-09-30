@@ -56,16 +56,16 @@ enum MigrationDirection {
 }
 
 // TableSpec selects tables for a migration, mirroring one CREATE PUBLICATION
-// "FOR TABLE" entry. qualified_name is the list of (optionally qualified) table names.
+// "FOR TABLE" entry. qualified_names are the (optionally schema-qualified)
+// table names ("schema.table").
 message TableSpec {
-  // qualified_name is the schema-qualified table name ("schema.table").
-  repeated string qualified_name = 1;
+  repeated string qualified_names = 1;
 }
 
-// SchemaSpec selects tables in a schema rather than tables and matches 
+// SchemaSpec selects tables in a schema rather than tables and matches
 // FOR TABLES IN SCHEMA name [, ...] construction.
 message SchemaSpec {
-  repeated string schema = 1;
+  repeated string schemata = 1;
 }
 
 // SelectionObject is one entry in a migration's table selection: either a table

@@ -57,11 +57,11 @@ func (s *migrationService) CreateMigration(ctx context.Context, req *migratorpb.
 		return nil, toGRPC(err)
 	}
 	proj, err := coord.CreateMigration(ctx, migration.CreateParams{
-		SourceDSN:      req.SourceDsn,
-		TargetDatabase: req.TargetDatabase,
-		TargetShard:    req.TargetShard,
-		Name:           req.Name,
-		Tables:         foldTableSelection(req.Objects),
+		SourceDSN:      req.GetMigration().GetSourceDsn(),
+		TargetDatabase: req.GetMigration().GetTargetDatabase(),
+		TargetShard:    req.GetMigration().GetTargetShard(),
+		Name:           req.GetMigration().GetName(),
+		Tables:         foldTableSelection(req.GetMigration().GetObjects()),
 		CopyData:       !req.SkipCopyData,
 		SkipSchemaCopy: req.SkipSchemaCopy,
 		SequenceMargin: req.SequenceMargin,
@@ -90,13 +90,13 @@ func foldTableSelection(objects *migratorpb.SelectionObject) []string {
 		}
 		return []string{"*"}
 	case *migratorpb.SelectionObject_Schema:
-		patterns := make([]string, 0, len(o.Schema.GetSchema()))
-		for _, s := range o.Schema.GetSchema() {
+		patterns := make([]string, 0, len(o.Schema.GetSchemata()))
+		for _, s := range o.Schema.GetSchemata() {
 			patterns = append(patterns, s+".*")
 		}
 		return patterns
 	case *migratorpb.SelectionObject_Table:
-		return o.Table.GetQualifiedName()
+		return o.Table.GetQualifiedNames()
 	default:
 		return nil
 	}
@@ -266,7 +266,7 @@ func tablesToSelectionObject(tables []string) *migratorpb.SelectionObject {
 	}
 	return &migratorpb.SelectionObject{
 		Object: &migratorpb.SelectionObject_Table{
-			Table: &migratorpb.TableSpec{QualifiedName: tables},
+			Table: &migratorpb.TableSpec{QualifiedNames: tables},
 		},
 	}
 }

@@ -99,9 +99,11 @@ func TestUpdateMigrationGuards(t *testing.T) {
 	defer mtClose()
 
 	createResp, err := mt.CreateMigration(ctx, &migratorpb.CreateMigrationRequest{
-		SourceDsn:      sourceDSN(srcPort),
-		TargetDatabase: targetDB,
-		Objects:        objs("public.orders"),
+		Migration: &migratorpb.Migration{
+			SourceDsn:      sourceDSN(srcPort),
+			TargetDatabase: targetDB,
+			Objects:        objs("public.orders"),
+		},
 	})
 	require.NoError(t, err)
 	id := createResp.GetMigration().GetId()
@@ -129,7 +131,7 @@ func TestUpdateMigrationGuards(t *testing.T) {
 	})
 	require.NoError(t, err, "tables may be changed while CREATED")
 	require.ElementsMatch(t, []string{"public.orders", "public.items"},
-		updResp.GetMigration().GetObjects().GetTable().GetQualifiedName(), "the widened selection must be re-resolved and stored")
+		updResp.GetMigration().GetObjects().GetTable().GetQualifiedNames(), "the widened selection must be re-resolved and stored")
 
 	// Change the sequence margin while CREATED.
 	_, err = mt.UpdateMigration(ctx, &migratorpb.UpdateMigrationRequest{

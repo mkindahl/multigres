@@ -61,10 +61,12 @@ func TestNamedMigrationAndOptions(t *testing.T) {
 	defer mtClose()
 
 	createResp, err := mt.CreateMigration(ctx, &migratorpb.CreateMigrationRequest{
-		SourceDsn:      sourceDSN(srcPort),
-		TargetDatabase: targetDB,
-		Name:           "nightly",
-		Objects:        objs("public.orders"),
+		Migration: &migratorpb.Migration{
+			SourceDsn:      sourceDSN(srcPort),
+			TargetDatabase: targetDB,
+			Name:           "nightly",
+			Objects:        objs("public.orders"),
+		},
 		SkipCopyData:   true,
 		SkipSchemaCopy: true,
 	})
@@ -75,10 +77,12 @@ func TestNamedMigrationAndOptions(t *testing.T) {
 
 	// A second migration reusing the name is rejected.
 	_, err = mt.CreateMigration(ctx, &migratorpb.CreateMigrationRequest{
-		SourceDsn:      sourceDSN(srcPort),
-		TargetDatabase: targetDB,
-		Name:           "nightly",
-		Objects:        objs("public.orders"),
+		Migration: &migratorpb.Migration{
+			SourceDsn:      sourceDSN(srcPort),
+			TargetDatabase: targetDB,
+			Name:           "nightly",
+			Objects:        objs("public.orders"),
+		},
 	})
 	require.ErrorContains(t, err, "already exists")
 

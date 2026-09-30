@@ -182,9 +182,11 @@ func TestGracefulDropDrainFailurePreservesServing(t *testing.T) {
 func activatedMigration(t *testing.T, ctx context.Context, mt migratorpb.MigratorClient, srcPort int, targetDB string) int64 {
 	t.Helper()
 	createResp, err := mt.CreateMigration(ctx, &migratorpb.CreateMigrationRequest{
-		SourceDsn:      sourceDSN(srcPort),
-		TargetDatabase: targetDB,
-		Objects:        objs("public.orders"),
+		Migration: &migratorpb.Migration{
+			SourceDsn:      sourceDSN(srcPort),
+			TargetDatabase: targetDB,
+			Objects:        objs("public.orders"),
+		},
 	})
 	require.NoError(t, err)
 	id := createResp.GetMigration().GetId()

@@ -46,12 +46,12 @@ func TestMarkersToSelection(t *testing.T) {
 	// "schema.*" markers fold into one SchemaSpec.
 	obj, err = markersToSelection([]string{"sales.*", "reporting.*"})
 	require.NoError(t, err)
-	require.Equal(t, []string{"sales", "reporting"}, obj.GetSchema().GetSchema())
+	require.Equal(t, []string{"sales", "reporting"}, obj.GetSchema().GetSchemata())
 
 	// Plain "schema.table" markers fold into one TableSpec.
 	obj, err = markersToSelection([]string{"public.orders", "public.customers"})
 	require.NoError(t, err)
-	require.Equal(t, []string{"public.orders", "public.customers"}, obj.GetTable().GetQualifiedName())
+	require.Equal(t, []string{"public.orders", "public.customers"}, obj.GetTable().GetQualifiedNames())
 
 	// Mixing forms is rejected.
 	_, err = markersToSelection([]string{"*", "public.orders"})

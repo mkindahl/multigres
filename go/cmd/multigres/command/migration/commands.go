@@ -65,11 +65,11 @@ func markersToSelection(markers []string) (*migratorpb.SelectionObject, error) {
 		return &migratorpb.SelectionObject{Object: &migratorpb.SelectionObject_All{All: true}}, nil
 	case len(tables) > 0:
 		return &migratorpb.SelectionObject{Object: &migratorpb.SelectionObject_Table{
-			Table: &migratorpb.TableSpec{QualifiedName: tables},
+			Table: &migratorpb.TableSpec{QualifiedNames: tables},
 		}}, nil
 	case len(schemas) > 0:
 		return &migratorpb.SelectionObject{Object: &migratorpb.SelectionObject_Schema{
-			Schema: &migratorpb.SchemaSpec{Schema: schemas},
+			Schema: &migratorpb.SchemaSpec{Schemata: schemas},
 		}}, nil
 	default:
 		return nil, nil
@@ -121,11 +121,13 @@ func AddCreateMigrationCommand() *cobra.Command {
 				return err
 			}
 			req := &migratorpb.CreateMigrationRequest{
-				SourceDsn:      sourceDSN,
-				TargetDatabase: targetDB,
-				TargetShard:    targetShard,
-				Name:           name,
-				Objects:        objects,
+				Migration: &migratorpb.Migration{
+					SourceDsn:      sourceDSN,
+					TargetDatabase: targetDB,
+					TargetShard:    targetShard,
+					Name:           name,
+					Objects:        objects,
+				},
 				SkipSchemaCopy: skipSchemaCopy,
 				QuiesceRoles:   quiesceRoles,
 			}

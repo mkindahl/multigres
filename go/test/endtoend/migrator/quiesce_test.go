@@ -79,10 +79,12 @@ func TestActivateHardQuiesceCutsOffSourceWriter(t *testing.T) {
 	defer mtClose()
 
 	createResp, err := mt.CreateMigration(ctx, &migratorpb.CreateMigrationRequest{
-		SourceDsn:      sourceDSN(srcPort),
-		TargetDatabase: targetDB,
-		Objects:        objs("public.orders"),
-		QuiesceRoles:   []string{appRole},
+		Migration: &migratorpb.Migration{
+			SourceDsn:      sourceDSN(srcPort),
+			TargetDatabase: targetDB,
+			Objects:        objs("public.orders"),
+		},
+		QuiesceRoles: []string{appRole},
 	})
 	require.NoError(t, err)
 	id := createResp.GetMigration().GetId()

@@ -101,9 +101,11 @@ func TestTargetFailoverDuringCopy(t *testing.T) {
 
 	mt, mtClose := migrationClient(t, primary)
 	createResp, err := mt.CreateMigration(ctx, &migratorpb.CreateMigrationRequest{
-		SourceDsn:      sourceDSN(srcPort),
-		TargetDatabase: targetDB,
-		Objects:        objs(tables...),
+		Migration: &migratorpb.Migration{
+			SourceDsn:      sourceDSN(srcPort),
+			TargetDatabase: targetDB,
+			Objects:        objs(tables...),
+		},
 	})
 	require.NoError(t, err)
 	id := createResp.GetMigration().GetId()

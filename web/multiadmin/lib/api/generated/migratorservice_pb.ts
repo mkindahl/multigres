@@ -146,17 +146,16 @@ proto3.util.setEnumType(MigrationDirection, "migrator.MigrationDirection", [
 
 /**
  * TableSpec selects tables for a migration, mirroring one CREATE PUBLICATION
- * "FOR TABLE" entry. qualified_name is the list of (optionally qualified) table names.
+ * "FOR TABLE" entry. qualified_names are the (optionally schema-qualified)
+ * table names ("schema.table").
  *
  * @generated from message migrator.TableSpec
  */
 export class TableSpec extends Message<TableSpec> {
   /**
-   * qualified_name is the schema-qualified table name ("schema.table").
-   *
-   * @generated from field: repeated string qualified_name = 1;
+   * @generated from field: repeated string qualified_names = 1;
    */
-  qualifiedName: string[] = [];
+  qualifiedNames: string[] = [];
 
   constructor(data?: PartialMessage<TableSpec>) {
     super();
@@ -166,7 +165,7 @@ export class TableSpec extends Message<TableSpec> {
   static readonly runtime: typeof proto3 = proto3;
   static readonly typeName = "migrator.TableSpec";
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
-    { no: 1, name: "qualified_name", kind: "scalar", T: 9 /* ScalarType.STRING */, repeated: true },
+    { no: 1, name: "qualified_names", kind: "scalar", T: 9 /* ScalarType.STRING */, repeated: true },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): TableSpec {
@@ -187,16 +186,16 @@ export class TableSpec extends Message<TableSpec> {
 }
 
 /**
- * SchemaSpec selects tables in a schema rather than tables and matches 
+ * SchemaSpec selects tables in a schema rather than tables and matches
  * FOR TABLES IN SCHEMA name [, ...] construction.
  *
  * @generated from message migrator.SchemaSpec
  */
 export class SchemaSpec extends Message<SchemaSpec> {
   /**
-   * @generated from field: repeated string schema = 1;
+   * @generated from field: repeated string schemata = 1;
    */
-  schema: string[] = [];
+  schemata: string[] = [];
 
   constructor(data?: PartialMessage<SchemaSpec>) {
     super();
@@ -206,7 +205,7 @@ export class SchemaSpec extends Message<SchemaSpec> {
   static readonly runtime: typeof proto3 = proto3;
   static readonly typeName = "migrator.SchemaSpec";
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
-    { no: 1, name: "schema", kind: "scalar", T: 9 /* ScalarType.STRING */, repeated: true },
+    { no: 1, name: "schemata", kind: "scalar", T: 9 /* ScalarType.STRING */, repeated: true },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): SchemaSpec {
@@ -758,31 +757,9 @@ export class GetMigrationJournalResponse extends Message<GetMigrationJournalResp
  */
 export class CreateMigrationRequest extends Message<CreateMigrationRequest> {
   /**
-   * name is an optional, human-friendly identifier, unique per target database.
-   * When set it can address the migration in place of the generated id.
-   *
-   * @generated from field: string name = 1;
+   * @generated from field: migrator.Migration migration = 1;
    */
-  name = "";
-
-  /**
-   * source_dsn is a full libpq conninfo to the standalone source postgres (may
-   * include TLS options). Round-tripped as-is in Migration; see the comment
-   * there.
-   *
-   * @generated from field: string source_dsn = 2;
-   */
-  sourceDsn = "";
-
-  /**
-   * @generated from field: string target_database = 3;
-   */
-  targetDatabase = "";
-
-  /**
-   * @generated from field: string target_shard = 4;
-   */
-  targetShard = "";
+  migration?: Migration;
 
   /**
    * sequence_margin is added past each sequence's max at a direction switch.
@@ -790,14 +767,6 @@ export class CreateMigrationRequest extends Message<CreateMigrationRequest> {
    * @generated from field: int64 sequence_margin = 5;
    */
   sequenceMargin = protoInt64.zero;
-
-  /**
-   * objects is the migration's table selection: a table list, a schema list,
-   * or all tables owned by the source role. See SelectionObject.
-   *
-   * @generated from field: migrator.SelectionObject objects = 6;
-   */
-  objects?: SelectionObject;
 
   /**
    * skip_copy_data skips the initial COPY at subscription setup (the data is
@@ -837,12 +806,8 @@ export class CreateMigrationRequest extends Message<CreateMigrationRequest> {
   static readonly runtime: typeof proto3 = proto3;
   static readonly typeName = "migrator.CreateMigrationRequest";
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
-    { no: 1, name: "name", kind: "scalar", T: 9 /* ScalarType.STRING */ },
-    { no: 2, name: "source_dsn", kind: "scalar", T: 9 /* ScalarType.STRING */ },
-    { no: 3, name: "target_database", kind: "scalar", T: 9 /* ScalarType.STRING */ },
-    { no: 4, name: "target_shard", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 1, name: "migration", kind: "message", T: Migration },
     { no: 5, name: "sequence_margin", kind: "scalar", T: 3 /* ScalarType.INT64 */ },
-    { no: 6, name: "objects", kind: "message", T: SelectionObject },
     { no: 7, name: "skip_copy_data", kind: "scalar", T: 8 /* ScalarType.BOOL */ },
     { no: 8, name: "skip_schema_copy", kind: "scalar", T: 8 /* ScalarType.BOOL */ },
     { no: 9, name: "quiesce_roles", kind: "scalar", T: 9 /* ScalarType.STRING */, repeated: true },

@@ -164,22 +164,22 @@ func TestMigrationDDL_CreateMigration(t *testing.T) {
 	_, err := runSQL(t, backend, "CREATE MIGRATION m CONNECTION onprem FOR ALL TABLES")
 	require.NoError(t, err)
 	require.NotNil(t, fake.create)
-	assert.Equal(t, "m", fake.create.GetName())
-	assert.Equal(t, "host=src dbname=app", fake.create.GetSourceDsn())
-	assert.Equal(t, "appdb", fake.create.GetTargetDatabase())
-	assert.Equal(t, "0", fake.create.GetTargetShard())
-	assert.True(t, fake.create.GetObjects().GetAll())
+	assert.Equal(t, "m", fake.create.GetMigration().GetName())
+	assert.Equal(t, "host=src dbname=app", fake.create.GetMigration().GetSourceDsn())
+	assert.Equal(t, "appdb", fake.create.GetMigration().GetTargetDatabase())
+	assert.Equal(t, "0", fake.create.GetMigration().GetTargetShard())
+	assert.True(t, fake.create.GetMigration().GetObjects().GetAll())
 
 	_, err = runSQL(t, backend, "CREATE MIGRATION m2 CONNECTION onprem FOR TABLE orders, customers WITH (copy_data = false, sequence_margin = 5)")
 	require.NoError(t, err)
-	assert.Equal(t, []string{"orders", "customers"}, fake.create.GetObjects().GetTable().GetQualifiedName())
+	assert.Equal(t, []string{"orders", "customers"}, fake.create.GetMigration().GetObjects().GetTable().GetQualifiedNames())
 	assert.True(t, fake.create.GetSkipCopyData())
 	assert.Equal(t, int64(5), fake.create.GetSequenceMargin())
 
 	// schema selection
 	_, err = runSQL(t, backend, "CREATE MIGRATION m3 CONNECTION onprem FOR TABLES IN SCHEMA public")
 	require.NoError(t, err)
-	assert.Equal(t, []string{"public"}, fake.create.GetObjects().GetSchema().GetSchema())
+	assert.Equal(t, []string{"public"}, fake.create.GetMigration().GetObjects().GetSchema().GetSchemata())
 
 	// unknown connection
 	_, err = runSQL(t, backend, "CREATE MIGRATION bad CONNECTION nope FOR ALL TABLES")

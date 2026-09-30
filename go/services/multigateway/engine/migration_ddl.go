@@ -244,19 +244,21 @@ func (m *MigrationDDL) createMigration(ctx context.Context, s *ast.CreateMigrati
 		return nil, err
 	}
 	req := &migratorpb.CreateMigrationRequest{
-		Name:           s.Name,
-		SourceDsn:      dsn,
-		TargetDatabase: m.backend.TargetDatabase,
-		TargetShard:    m.backend.TargetShard,
+		Migration: &migratorpb.Migration{
+			Name:           s.Name,
+			SourceDsn:      dsn,
+			TargetDatabase: m.backend.TargetDatabase,
+			TargetShard:    m.backend.TargetShard,
+		},
 	}
 	if s.ForAllTables {
-		req.Objects = &migratorpb.SelectionObject{Object: &migratorpb.SelectionObject_All{All: true}}
+		req.Migration.Objects = &migratorpb.SelectionObject{Object: &migratorpb.SelectionObject_All{All: true}}
 	} else {
 		obj, err := selectionObjects(s.Objects)
 		if err != nil {
 			return nil, err
 		}
-		req.Objects = obj
+		req.Migration.Objects = obj
 	}
 	if err := applyMigrationOptions(req, s.Options); err != nil {
 		return nil, err
@@ -539,11 +541,11 @@ func selectionObjects(list *ast.NodeList) (*migratorpb.SelectionObject, error) {
 	switch {
 	case len(tables) > 0:
 		return &migratorpb.SelectionObject{Object: &migratorpb.SelectionObject_Table{
-			Table: &migratorpb.TableSpec{QualifiedName: tables},
+			Table: &migratorpb.TableSpec{QualifiedNames: tables},
 		}}, nil
 	case len(schemas) > 0:
 		return &migratorpb.SelectionObject{Object: &migratorpb.SelectionObject_Schema{
-			Schema: &migratorpb.SchemaSpec{Schema: schemas},
+			Schema: &migratorpb.SchemaSpec{Schemata: schemas},
 		}}, nil
 	default:
 		return nil, nil

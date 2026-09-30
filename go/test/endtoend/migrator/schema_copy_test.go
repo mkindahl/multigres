@@ -60,9 +60,11 @@ func TestSchemaCopyDropsExistingTargetTable(t *testing.T) {
 	defer mtClose()
 
 	createResp, err := mt.CreateMigration(ctx, &migratorpb.CreateMigrationRequest{
-		SourceDsn:      sourceDSN(srcPort),
-		TargetDatabase: targetDB,
-		Objects:        objs("public.orders"),
+		Migration: &migratorpb.Migration{
+			SourceDsn:      sourceDSN(srcPort),
+			TargetDatabase: targetDB,
+			Objects:        objs("public.orders"),
+		},
 		// copy_data defaults true; schema copy is NOT skipped, so it must drop first.
 	})
 	require.NoError(t, err)
