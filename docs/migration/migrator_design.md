@@ -315,10 +315,10 @@ on` cluster-wide to freeze anything still connected; (3) `pg_terminate_backend` 
   then (4) capture the barrier LSN and wait for `confirmed_flush ≥ LSN`. Terminating (rather than only blocking) is what
   makes the captured LSN final. `quiesce_roles` is opt-in: with none set, steps (2)+(3) still cut and freeze the live
   writers, but a reconnecting client is defaulted read-only, so naming the app role(s) is what closes the last hole.
-  The source is un-quiesced (`default_transaction_read_only = off`) as part of the switch so it can accept writes
-  again — both from its own clients and from the new subscription's apply; the CONNECT fence, not the GUC, is what
-  keeps the app out for the rest of the EXPORT lifetime; `deactivate` and a drop `GRANT CONNECT` back. The symmetric
-  `deactivate` (EXPORT→IMPORT) needs no GUC on the target: the target's postgres is
+  The source is un-quiesced (`default_transaction_read_only = off`) as part of the switch because DDL replication apply
+  runs captured DDL through an `ENABLE ALWAYS` trigger, which `ProcessUtility` rejects under a read-only transaction —
+  the CONNECT fence, not the GUC, is what keeps the app out for the rest of the EXPORT lifetime; `deactivate` and a drop
+  `GRANT CONNECT` back. The symmetric `deactivate` (EXPORT→IMPORT) needs no GUC on the target: the target's postgres is
   reachable only through the pooler, so its hard guarantee is the serving gate — `deactivate` drains the pooler to
   non-serving **synchronously** (the same `drainForImport` barrier `StartMigration` uses) before the target becomes a
   subscriber, rather than waiting for the async monitor tick. A graceful drop keeps the source a standalone primary, so
@@ -358,7 +358,7 @@ on` cluster-wide to freeze anything still connected; (3) `pg_terminate_backend` 
   Use the default **text** format, not `binary` — no built-in type's binary `send` format changes across majors, but
   binary demands an exact type match, fails outright for any type the older subscriber lacks a binary `recv` for, and is
   fragile for OID-embedding composite/`record` columns; text is version-robust. (3) Sequences and DDL still do not
-  replicate (see the switch's `setval` step) — on an actual failback, advance the old
+  replicate (see the switch's `setval` step and the DDL-replication follow-up) — on an actual failback, advance the old
   server's sequences past max first, and keep schema changes off the tested platform or apply them to both sides, or the
   old subscriber's apply worker stalls. (4) Do not leave both directions streaming at once across versions: the
   loop-breaker (`origin = none`) is PG16+, so a pre-PG16 subscriber cannot suppress echoed changes — keep a single
@@ -920,8 +920,8 @@ sequenceDiagram
 ### Failover during a direction switch (crash-safe switch)
 
 The direction switch (`activate-migration` / `deactivate-migration`) drives a non-atomic sequence — drain, then **drop
-the current subscription**, drop the current publication, create the reverse publication, and **create the reverse
-subscription**. A target-primary failover in the middle of that sequence must not
+the current subscription**, drop the current publication, flip the DDL-replication roles, create the reverse
+publication, and **create the reverse subscription**. A target-primary failover in the middle of that sequence must not
 wedge the migration, so the switch is made crash-safe by treating the migration row as a **write-ahead intent log**.
 
 **Directional phases record the intent.** The steady and switching phases carry the direction: `IMPORTING` / `EXPORTING`
@@ -1168,6 +1168,48 @@ incl. TLS via `go/services/multipooler/internal/connpoolmanager` (`ConnectionCon
 `ValidatePGSSL`) plus `go/common/pgprotocol/client` (for direct DSNs); the replication-connection primitive
 `NewLogicalReplicationConn` and LSN/wait helpers in `go/services/multipooler/internal/manager/pg_replication.go`;
 `topoclient.Store.LockShard`; `go/common/mterrors`; type OIDs in `go/common/parser/ast/oids.go`.
+
+## DDL replication (experimental)
+
+An experimental extension replicates table DDL from source to target over the **same logical-replication stream as the
+data**, so schema changes land on the target at the correct point relative to the rows that depend on them. It is a
+proof of concept wired into the IMPORT setup/teardown; the full rationale, mechanism, and limitations are in the
+[DDL-replication design note](./migrator_ddl_replication_issue.md).
+
+**Mechanism (stock Postgres only).**
+
+- _Capture:_ on the publisher, a `multigres.ddl_log` table plus two event triggers — `multigres.capture_ddl` on
+  `ddl_command_end` for `ALTER TABLE`, and `multigres.capture_drop` on `sql_drop` for `DROP TABLE` (whose dropped
+  objects `ddl_command_end` does not report) — append each executing statement (via `current_query()`) to the log. The
+  INSERT commits in the same transaction as the DDL, so the log row and the schema change are atomic.
+- _Stream:_ `ddl_log` is added to the migration's publication, so its rows decode and apply on the target's logical
+  apply worker in commit order — the single-stream property that guarantees a DDL lands before any later data change
+  that depends on it.
+- _Apply:_ a matching `multigres.ddl_log` on the subscriber carries an `ENABLE ALWAYS` `AFTER INSERT` trigger
+  (`multigres.apply_ddl`) that `EXECUTE`s each arriving statement inside the apply transaction, under the captured
+  schema's `search_path` and exception-guarded (a statement that still fails is skipped with a warning rather than
+  stalling the stream).
+
+**Scoping, concurrency, and direction.**
+
+- Capture is scoped to each migration's tables via a publisher-side `multigres.ddl_capture_tables` membership table:
+  `capture_ddl` fans one `ddl_log` row per owning migration, tagged with `migration_id`, and each publication carries a
+  row filter `WHERE migration_id = '<id>'`. The shared event triggers are refcounted, and a subscriber-side
+  `multigres.ddl_apply` guard keeps a server that is both an IMPORT subscriber and an EXPORT publisher correct.
+- Direction symmetry: capture runs on whichever side is the current publisher and apply on the current subscriber,
+  reconfigured across an activate/deactivate switch.
+
+**Constraints (proof of concept).**
+
+- Creating the event triggers requires a **superuser** DSN on the publisher.
+- `ALTER TABLE` (on `ddl_command_end`) and `DROP TABLE` (on `sql_drop`) are captured; `CREATE TABLE`, `CREATE INDEX`
+  (incl. `CONCURRENTLY`), `DROP INDEX`, and non-table DDL are not. `DROP TABLE` captures only the tables the user
+  explicitly dropped (cascades are handled by replaying the original statement). The one non-transactional statement
+  carrying an allowlisted tag — `ALTER TABLE … DETACH PARTITION … CONCURRENTLY` — is excluded explicitly, since it
+  cannot run inside the apply transaction.
+- `CREATE TABLE` is not captured: the migration's table set is fixed at start, so a new table is out of scope and the
+  listed tables already exist (from the initial schema copy). `current_query()` captures the whole submitted statement
+  (a multi-statement batch replays in full).
 
 ## Alternatives considered
 

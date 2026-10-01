@@ -60,6 +60,7 @@ type migrationTarget interface {
 	WaitSlotConfirmed(ctx context.Context, slot, targetLSN string) error
 	ReplicationLag(ctx context.Context, slot string) (lagBytes uint64, lagSeconds float64, present bool, err error)
 	AdvanceSequences(ctx context.Context, tables []string, margin int64) error
+	ddlConn() ddlConn
 }
 
 // migrationSource is the subset of *source the Coordinator uses: the external
@@ -86,6 +87,7 @@ type migrationSource interface {
 	WaitSlotConfirmed(slot, targetLSN string) error
 	AdvanceSequences(tables []string, margin int64) error
 	close()
+	ddlConn() ddlConn
 }
 
 // Compile-time assertions that the concrete production types satisfy the ports.

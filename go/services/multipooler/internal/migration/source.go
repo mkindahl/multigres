@@ -410,10 +410,11 @@ func (s *source) DumpSchema(tables []string) (string, error) {
 	return b.String(), nil
 }
 
-// CreatePublication creates a publication FOR TABLE the given tables on the
-// source (IMPORT direction: the source is the publisher).
+// CreatePublication creates a publication on the source FOR TABLE the given
+// tables plus multigres.ddl_log (so captured DDL rides the same stream). Used
+// when the source is the publisher (IMPORT direction).
 func (s *source) CreatePublication(name string, tables []string) error {
-	if _, err := s.conn.Exec(s.ctx, createPublicationSQL(name, tables)); err != nil {
+	if _, err := s.conn.Exec(s.ctx, createPublicationWithDDLLogSQL(name, tables)); err != nil {
 		return fmt.Errorf("create publication on source: %w", err)
 	}
 	return nil

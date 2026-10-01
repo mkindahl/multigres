@@ -73,10 +73,11 @@ func dropTablesSQL(tables []string) string {
 	return "DROP TABLE IF EXISTS " + strings.Join(quoted, ", ") + " CASCADE"
 }
 
-// CreatePublication creates a publication FOR TABLE the given tables on the
-// local Postgres. Used when this side is the publisher (EXPORT direction).
+// CreatePublication creates a publication on the local Postgres FOR TABLE the
+// given tables plus multigres.ddl_log (so captured DDL rides the same
+// stream). Used when this side is the publisher (EXPORT direction).
 func (t *target) CreatePublication(ctx context.Context, name string, tables []string) error {
-	if _, err := t.qs.QueryAdmin(ctx, createPublicationSQL(name, tables)); err != nil {
+	if _, err := t.qs.QueryAdmin(ctx, createPublicationWithDDLLogSQL(name, tables)); err != nil {
 		return fmt.Errorf("create publication: %w", err)
 	}
 	return nil
@@ -359,17 +360,6 @@ func createSubscriptionSQL(name, conninfo, publication string, copyData bool, sl
 
 // quoteQualifiedName quotes a possibly schema-qualified identifier
 // (schema.table), quoting each dotted part independently.
-// createPublicationSQL builds a CREATE PUBLICATION ... FOR TABLE statement,
-// quoting each (optionally schema-qualified) table name.
-func createPublicationSQL(name string, tables []string) string {
-	quoted := make([]string, len(tables))
-	for i, tbl := range tables {
-		quoted[i] = quoteQualifiedName(tbl)
-	}
-	return fmt.Sprintf("CREATE PUBLICATION %s FOR TABLE %s",
-		ast.QuoteIdentifier(name), strings.Join(quoted, ", "))
-}
-
 func quoteQualifiedName(name string) string {
 	parts := strings.Split(name, ".")
 	for i, p := range parts {

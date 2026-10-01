@@ -117,6 +117,8 @@ func TestTargetFailoverDuringCopy(t *testing.T) {
 	// fully copied and at least one not yet. A tablesync COPY commits atomically,
 	// so a data table on the target has either 0 rows (still copying) or its full
 	// count (done); count the done ones directly on the (soon-to-die) primary.
+	// (We can't gate on the migration's total/ready relation counts because those
+	// include multigres.ddl_log, which DDL replication adds to the subscription.)
 	oldTC := targetConn(t, ctx, primary, targetDB)
 	var copiedAtKill int
 	require.Eventually(t, func() bool {

@@ -144,6 +144,20 @@ func (f *fakeStore) journalEvents(migrationID int64) []JournalEvent {
 
 func (f *fakeStore) put(m *Migration) { f.migs[m.ID] = m }
 
+// fakeDDL is a no-op ddlConn (DDL replication is exercised by ddlrepl_test.go); it
+// lets the coordinator's switch/teardown paths run without a real connection.
+type fakeDDL struct {
+	execErr  error
+	countErr error
+	count    int64
+}
+
+func (d fakeDDL) exec(context.Context, string) error             { return d.execErr }
+func (d fakeDDL) execArgs(context.Context, string, ...any) error { return d.execErr }
+func (d fakeDDL) queryCount(context.Context, string, ...any) (int64, error) {
+	return d.count, d.countErr
+}
+
 // fakeTarget is an in-memory migrationTarget.
 type fakeTarget struct {
 	log *[]string
@@ -273,6 +287,7 @@ func (t *fakeTarget) ReplicationLag(context.Context, string) (uint64, float64, b
 func (t *fakeTarget) AdvanceSequences(context.Context, []string, int64) error {
 	return t.advanceSeqErr
 }
+func (t *fakeTarget) ddlConn() ddlConn { return fakeDDL{} }
 
 // fakeSource is an in-memory migrationSource.
 type fakeSource struct {
@@ -416,6 +431,7 @@ func (s *fakeSource) PublicationExists(string) (bool, error) {
 }
 func (s *fakeSource) WaitSlotConfirmed(string, string) error { return s.waitSlotErr }
 func (s *fakeSource) AdvanceSequences([]string, int64) error { return s.advSeqErr }
+func (s *fakeSource) ddlConn() ddlConn                       { return fakeDDL{} }
 func (s *fakeSource) close()                                 { s.closed++ }
 
 // testCoord bundles a Coordinator wired to fakes plus handles to those fakes.

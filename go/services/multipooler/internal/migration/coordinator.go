@@ -167,12 +167,12 @@ func (c *Coordinator) CreateMigration(ctx context.Context, p CreateParams) (*Pro
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// Only one migration at a time is supported: the serving gate
-	// (refreshMigrationHold) counts migration rows by phase, not by migration id,
-	// so a second concurrent migration would make that count ambiguous. c.mu
-	// serializes creates on the primary, so this check-then-insert cannot race
-	// another create in this coordinator. A FAILED migration still counts — its
-	// row must be explicitly dropped first.
+	// Only one migration at a time is supported: the DDL-replication machinery
+	// (ddlrepl.go) is not scoped per migration, so a second concurrent migration
+	// would corrupt the first's ddl_log/ddl_capture_tables state. c.mu serializes
+	// creates on the primary, so this check-then-insert cannot race another
+	// create in this coordinator. A FAILED migration still counts — its row (and
+	// possibly its DDL-replication objects) must be explicitly dropped first.
 	if existing, err := c.store.List(ctx); err != nil {
 		return nil, err
 	} else if len(existing) > 0 {
@@ -235,8 +235,8 @@ func (c *Coordinator) StartMigration(ctx context.Context, ref Ref) (*Projection,
 
 // runSetup runs VALIDATING -> SCHEMA_COPY -> CREATE_PUBLICATION -> COPYING.
 func (c *Coordinator) runSetup(ctx context.Context, m *Migration) error {
-	// One source connection drives the whole setup (validate, publication);
-	// DumpSchema still shells out to pg_dump separately.
+	// One source connection drives the whole setup (validate, publication, DDL
+	// capture); DumpSchema still shells out to pg_dump separately.
 	src, err := c.newSource(ctx, m.SourceDSN)
 	if err != nil {
 		return err
@@ -289,10 +289,28 @@ func (c *Coordinator) runSetup(ctx context.Context, m *Migration) error {
 		}
 	}
 
+	// EXPERIMENTAL: table-scoped DDL replication (see ddlrepl.go). IMPORT: the
+	// target is the subscriber (apply) and the source is the publisher (capture).
+	// Register this migration's tables for capture and set up apply before the
+	// publication; the publication carries multigres.ddl_log so captured DDL
+	// rides the same stream; arm the source event trigger last (after the
+	// log/function exist and just before CreateSubscription) so little DDL
+	// accumulates in ddl_log before the subscription's initial snapshot.
+	// (CREATE PUBLICATION is never captured regardless — wrong command tag.)
+	if err := setupDDLApply(ctx, c.target.ddlConn()); err != nil {
+		return err
+	}
+	if err := setupDDLCapture(ctx, src.ddlConn(), m.Tables); err != nil {
+		return err
+	}
+
 	if err := c.advancePhase(ctx, m, PhaseCreatePublication); err != nil {
 		return err
 	}
 	if err := src.CreatePublication(m.PublicationName(), m.Tables); err != nil {
+		return err
+	}
+	if err := armDDLCapture(ctx, src.ddlConn()); err != nil {
 		return err
 	}
 
@@ -1124,8 +1142,7 @@ func (c *Coordinator) switchTo(ctx context.Context, m *Migration, target Directi
 	if target == DirectionExport {
 		// IMPORT -> EXPORT: the target (Multigres) becomes publisher/writer, and
 		// the old source becomes a subscriber. Un-quiesce the source first (the
-		// drain left it read-only) so it can accept writes again — both from its
-		// own clients and from the new subscription's apply.
+		// drain left it read-only) so its own DDL and replication apply can write.
 		if err := src.SetReadOnly(false); err != nil {
 			return "", err
 		}
@@ -1138,12 +1155,31 @@ func (c *Coordinator) switchTo(ctx context.Context, m *Migration, target Directi
 		if err := src.DropPublication(pub); err != nil {
 			return "", err
 		}
+		// Flip DDL replication to match: capture moves from the source to the
+		// target, apply from the target to the source (see ddlrepl.go). Tear down
+		// the old-direction roles, then set up the new ones before recreating the
+		// link.
+		if err := teardownDDLCapture(ctx, src.ddlConn()); err != nil {
+			return "", err
+		}
+		if err := teardownDDLApply(ctx, c.target.ddlConn()); err != nil {
+			return "", err
+		}
+		if err := setupDDLApply(ctx, src.ddlConn()); err != nil {
+			return "", err
+		}
+		if err := setupDDLCapture(ctx, c.target.ddlConn(), m.Tables); err != nil {
+			return "", err
+		}
 		if exists, err := c.target.PublicationExists(ctx, pub); err != nil {
 			return "", err
 		} else if !exists {
 			if err := c.target.CreatePublication(ctx, pub, m.Tables); err != nil {
 				return "", err
 			}
+		}
+		if err := armDDLCapture(ctx, c.target.ddlConn()); err != nil {
+			return "", err
 		}
 		// Pre-create the reverse slot on the target *now*, before serving turns on,
 		// so it captures every subsequent target write; then advance it to the
@@ -1184,8 +1220,8 @@ func (c *Coordinator) switchTo(ctx context.Context, m *Migration, target Directi
 	// Restore the CONNECT privilege the ACTIVATE cutover revoked from the app roles:
 	// the source is a primary again, so applications must be able to reach it. The
 	// source is already writable — a switch to EXPORT un-quiesced it (SetReadOnly
-	// false) so its own subscription could apply replicated writes — so no
-	// read-only flip is needed here. Idempotent and a no-op when no roles were fenced.
+	// false) so DDL replication apply could run — so no read-only flip is needed
+	// here. Idempotent and a no-op when no roles were fenced.
 	if err := src.GrantConnect(m.QuiesceRoles); err != nil {
 		return "", err
 	}
@@ -1210,12 +1246,29 @@ func (c *Coordinator) switchTo(ctx context.Context, m *Migration, target Directi
 	if err := c.target.DropLogicalSlot(ctx, sub); err != nil {
 		return "", err
 	}
+	// Flip DDL replication back: capture moves from the target to the source,
+	// apply from the source to the target.
+	if err := teardownDDLCapture(ctx, c.target.ddlConn()); err != nil {
+		return "", err
+	}
+	if err := teardownDDLApply(ctx, src.ddlConn()); err != nil {
+		return "", err
+	}
+	if err := setupDDLApply(ctx, c.target.ddlConn()); err != nil {
+		return "", err
+	}
+	if err := setupDDLCapture(ctx, src.ddlConn(), m.Tables); err != nil {
+		return "", err
+	}
 	if exists, err := src.PublicationExists(pub); err != nil {
 		return "", err
 	} else if !exists {
 		if err := src.CreatePublication(pub, m.Tables); err != nil {
 			return "", err
 		}
+	}
+	if err := armDDLCapture(ctx, src.ddlConn()); err != nil {
+		return "", err
 	}
 	if exists, err := c.target.SubscriptionExists(ctx, sub); err != nil {
 		return "", err
@@ -1251,6 +1304,8 @@ func (c *Coordinator) teardown(ctx context.Context, m *Migration, dir Direction)
 	if dir == DirectionImport {
 		// IMPORT: subscription (apply) on the target, publication (capture) on the source.
 		logErr("drop target subscription", c.target.DropSubscription(ctx, m.SubscriptionName()))
+		// EXPERIMENTAL: tear down DDL replication (see ddlrepl.go).
+		logErr("drop target DDL apply", teardownDDLApply(ctx, c.target.ddlConn()))
 		if src != nil {
 			// A graceful (non-force) drop drained the source with
 			// default_transaction_read_only=on; reset it before the source-side
@@ -1260,12 +1315,14 @@ func (c *Coordinator) teardown(ctx context.Context, m *Migration, dir Direction)
 			// force drop that never quiesced.
 			logErr("un-quiesce source", src.SetReadOnly(false))
 			logErr("drop source publication", src.DropPublication(m.PublicationName()))
+			logErr("drop source DDL capture", teardownDDLCapture(ctx, src.ddlConn()))
 		}
 		return
 	}
 	// EXPORT: subscription (apply) on the source, publication (capture) on the target.
 	if src != nil {
 		logErr("drop source subscription", src.DropSubscription(m.SubscriptionName()))
+		logErr("drop source DDL apply", teardownDDLApply(ctx, src.ddlConn()))
 		// The ACTIVATE cutover revoked CONNECT from the app roles; the migration is
 		// being torn down, so restore their access to the now-standalone source.
 		logErr("restore source connect", src.GrantConnect(m.QuiesceRoles))
@@ -1274,6 +1331,7 @@ func (c *Coordinator) teardown(ctx context.Context, m *Migration, dir Direction)
 	// The reverse slot was pre-created on the target (create_slot=false), so the
 	// source-side subscription drop above does not remove it.
 	logErr("drop target reverse slot", c.target.DropLogicalSlot(ctx, m.SubscriptionName()))
+	logErr("drop target DDL capture", teardownDDLCapture(ctx, c.target.ddlConn()))
 }
 
 // Reconcile refreshes every in-flight migration: it advances COPYING to
