@@ -22,7 +22,7 @@
 # Steps:
 #   1. stop the background write client
 #   2. drop every migration (--force: works even when stalled/streaming; also
-#      tears down the subscription/publication/slot)
+#      tears down the subscription/publication/slot and the ddl_log objects)
 #   3. drop the copied target table (drop-migration leaves it, and a fresh
 #      migration's schema-copy does CREATE TABLE, which would fail if it exists)
 #   4. recreate + reseed the source (unless --keep-source)
@@ -99,7 +99,7 @@ else
   echo "[reset]   psql client '$PSQL' not found; drop target table $TABLE manually (or set PSQL)" >&2
 fi
 
-# 4. Recreate + reseed the standalone source.
+# 4. Recreate + reseed the standalone source (clears leftover ddl_log/columns).
 if [[ "$KEEP_SOURCE" == "1" ]]; then
   echo "[reset] keeping source '$SRC_NAME' as-is (--keep-source)"
 else

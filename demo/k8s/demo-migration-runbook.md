@@ -168,6 +168,17 @@ DROP MIGRATION accounts;   -- graceful (requires a caught-up STREAMING state); a
 DROP CONNECTION src;
 ```
 
+## Optional — replicate a source schema change
+
+While importing (app still on the source), a DDL change on the source replicates to the target. In **pane 1** (source console):
+
+```bash
+psql -c 'ALTER TABLE public.accounts ADD COLUMN note text'
+psql -c 'ALTER TABLE public.accounts DROP COLUMN note'
+```
+
+The `note` column appears then disappears in the balance panes as the DDL streams through.
+
 ## Optional — survive a target-primary failover
 
 The migration survives a target-primary failover: the coordinator resumes on the newly elected primary. Kill the current primary's pod (pane 1):

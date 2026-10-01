@@ -168,7 +168,37 @@ watch -n1 "bin/multigres get-migration --admin-server $ADMIN --id $ID | jq '{pha
 The Multigres-side watcher (T3) should now show `accounts`/`balance` climbing to
 match the source, with `invariant: OK`.
 
-## 6. Kill the target primary mid-migration (T4)
+## 6. Demonstrate DDL replication (T4)
+
+> **Experimental.** DDL replication is an experimental coordinator feature (built
+> into the images from this branch). Only table-modification DDL — `CREATE TABLE`
+> and `ALTER TABLE` — is captured and replayed on the target, and the source DSN
+> must be a superuser (the `pg-source` container's `postgres` is). Index DDL and
+> `DROP` statements are not replicated.
+
+While the migration is streaming, change the table's schema **on the source** and
+watch it ride the same replication stream to the target — applied in order
+relative to the concurrent data changes, so no row that depends on the new column
+can arrive before it.
+
+```bash
+# add a column on the SOURCE (host address, localhost:5433)
+psql 'host=localhost port=5433 user=postgres password=sourcepass dbname=postgres sslmode=disable' \
+  -c 'ALTER TABLE public.accounts ADD COLUMN note text'
+```
+
+- The **source** watcher (T3 / dashboard pane 3) shows the `note` column
+  immediately; the **Multigres** watcher (pane 4) shows it appear a moment later,
+  once the DDL replicates — all while the writer keeps moving balances and the
+  `TOTAL` rollup stays put.
+- Remove it again to show `ALTER TABLE … DROP COLUMN` replicates too:
+
+```bash
+psql 'host=localhost port=5433 user=postgres password=sourcepass dbname=postgres sslmode=disable' \
+  -c 'ALTER TABLE public.accounts DROP COLUMN note'
+```
+
+## 7. Kill the target primary mid-migration (T4)
 
 While the migration is streaming (T2 still writing to the source), delete the
 primary pooler pod. `multiorch` re-elects a new primary and the migration
@@ -182,7 +212,7 @@ kubectl --context kind-multidemo -n default get pods -l app=multipooler \
 kubectl --context kind-multidemo -n default delete pod multipooler-zone1-0
 ```
 
-## 7. Show the pickup, then cut the app over (T4 → T2)
+## 8. Show the pickup, then cut the app over (T4 → T2)
 
 ```bash
 # migration keeps going: phase returns to STREAMING on the new primary
