@@ -96,14 +96,24 @@ func (s *MultiadminServer) DeactivateMigration(ctx context.Context, req *migrato
 	return c.DeactivateMigration(ctx, req)
 }
 
-// GetMigrations forwards to Multigres Migrator.
-func (s *MultiadminServer) GetMigrations(ctx context.Context, req *migratorpb.GetMigrationsRequest) (*migratorpb.GetMigrationsResponse, error) {
+// GetMigration forwards to Multigres Migrator.
+func (s *MultiadminServer) GetMigration(ctx context.Context, req *migratorpb.GetMigrationRequest) (*migratorpb.GetMigrationResponse, error) {
 	c, closer, err := s.primaryMigrationClient(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer closer()
-	return c.GetMigrations(ctx, req)
+	return c.GetMigration(ctx, req)
+}
+
+// ListMigrations forwards to Multigres Migrator.
+func (s *MultiadminServer) ListMigrations(ctx context.Context, req *migratorpb.ListMigrationsRequest) (*migratorpb.ListMigrationsResponse, error) {
+	c, closer, err := s.primaryMigrationClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer closer()
+	return c.ListMigrations(ctx, req)
 }
 
 // DropMigration forwards to Multigres Migrator.

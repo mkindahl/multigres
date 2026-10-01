@@ -85,6 +85,14 @@ func splitRef(ref string) (id int64, name string) {
 	return 0, ref
 }
 
+// toRef builds a MigrationRef from splitRef's result.
+func toRef(id int64, name string) *migratorpb.MigrationRef {
+	if name != "" {
+		return &migratorpb.MigrationRef{Ref: &migratorpb.MigrationRef_Name{Name: name}}
+	}
+	return &migratorpb.MigrationRef{Ref: &migratorpb.MigrationRef_Id{Id: id}}
+}
+
 func printJSON(cmd *cobra.Command, msg proto.Message) error {
 	marshaler := protojson.MarshalOptions{Indent: "  ", UseProtoNames: true}
 	data, err := marshaler.Marshal(msg)
@@ -169,7 +177,7 @@ func AddStartMigrationCommand() *cobra.Command {
 			}
 			defer client.Close()
 			refID, refName := splitRef(id)
-			req := &migratorpb.StartMigrationRequest{Id: refID, Name: refName}
+			req := &migratorpb.StartMigrationRequest{Ref: toRef(refID, refName)}
 			resp, err := client.StartMigration(cmd.Context(), req)
 			if err != nil {
 				return fmt.Errorf("failed to start migration: %w", err)
@@ -193,19 +201,24 @@ func AddUpdateMigrationCommand() *cobra.Command {
 			f := cmd.Flags()
 			id, _ := f.GetString("id")
 			refID, refName := splitRef(id)
-			req := &migratorpb.UpdateMigrationRequest{Id: refID, Name: refName}
+			req := &migratorpb.UpdateMigrationRequest{Migration: &migratorpb.Migration{Id: refID, Name: refName}}
 			var paths []string
 			if f.Changed("source-dsn") {
-				req.SourceDsn, _ = f.GetString("source-dsn")
+				req.Migration.SourceDsn, _ = f.GetString("source-dsn")
 				paths = append(paths, "source_dsn")
 			}
 			if f.Changed("sequence-margin") {
-				req.SequenceMargin, _ = f.GetInt64("sequence-margin")
+				req.Migration.SequenceMargin, _ = f.GetInt64("sequence-margin")
 				paths = append(paths, "sequence_margin")
 			}
 			if f.Changed("tables") {
-				req.Tables, _ = f.GetStringSlice("tables")
-				paths = append(paths, "tables")
+				tables, _ := f.GetStringSlice("tables")
+				objects, err := markersToSelection(tables)
+				if err != nil {
+					return err
+				}
+				req.Migration.Objects = objects
+				paths = append(paths, "objects")
 			}
 			if len(paths) == 0 {
 				return errors.New("no fields to update; set at least one of --source-dsn/--sequence-margin/--tables")
@@ -259,10 +272,9 @@ func AddActivateMigrationCommand() *cobra.Command {
 
 			refID, refName := splitRef(id)
 			resp, err := client.ActivateMigration(cmd.Context(), &migratorpb.ActivateMigrationRequest{
-				Id:                 refID,
-				Name:               refName,
-				MaxLagBytes:        maxLagBytes,
-				WaitTimeoutSeconds: waitTimeout,
+				Ref:                toRef(refID, refName),
+				MaxLagBytes:        &maxLagBytes,
+				WaitTimeoutSeconds: &waitTimeout,
 			})
 			if err != nil {
 				return fmt.Errorf("failed to activate migration: %w", err)
@@ -292,7 +304,7 @@ func AddDeactivateMigrationCommand() *cobra.Command {
 			defer client.Close()
 
 			refID, refName := splitRef(id)
-			resp, err := client.DeactivateMigration(cmd.Context(), &migratorpb.DeactivateMigrationRequest{Id: refID, Name: refName})
+			resp, err := client.DeactivateMigration(cmd.Context(), &migratorpb.DeactivateMigrationRequest{Ref: toRef(refID, refName)})
 			if err != nil {
 				return fmt.Errorf("failed to deactivate migration: %w", err)
 			}
@@ -305,7 +317,9 @@ func AddDeactivateMigrationCommand() *cobra.Command {
 	return cmd
 }
 
-// AddListMigrationsCommand lists all migrations.
+// AddListMigrationsCommand lists all migrations, printing full details for
+// each: it lists ids via ListMigrations, then fetches each one's details via
+// GetMigration.
 func AddListMigrationsCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list-migrations",
@@ -317,19 +331,36 @@ func AddListMigrationsCommand() *cobra.Command {
 			}
 			defer client.Close()
 
-			req := &migratorpb.GetMigrationsRequest{}
-			resp, err := client.GetMigrations(cmd.Context(), req)
+			list, err := client.ListMigrations(cmd.Context(), &migratorpb.ListMigrationsRequest{})
 			if err != nil {
 				return fmt.Errorf("failed to list migrations: %w", err)
 			}
-			return printJSON(cmd, resp)
+			migrations := make([]*migratorpb.GetMigrationResponse, 0, len(list.GetIds()))
+			for _, id := range list.GetIds() {
+				resp, err := client.GetMigration(cmd.Context(), &migratorpb.GetMigrationRequest{
+					Ref: &migratorpb.MigrationRef{Ref: &migratorpb.MigrationRef_Id{Id: id}},
+				})
+				if err != nil {
+					return fmt.Errorf("failed to get migration %d: %w", id, err)
+				}
+				migrations = append(migrations, resp)
+			}
+			marshaler := protojson.MarshalOptions{Indent: "  ", UseProtoNames: true}
+			for _, mig := range migrations {
+				data, err := marshaler.Marshal(mig)
+				if err != nil {
+					return fmt.Errorf("failed to marshal response to JSON: %w", err)
+				}
+				cmd.Println(string(data))
+			}
+			return nil
 		},
 	}
 	cmd.Flags().String("admin-server", "", "Address of the multiadmin server (overrides config)")
 	return cmd
 }
 
-// AddGetMigrationCommand shows one migration by id.
+// AddGetMigrationCommand shows one migration by id or name.
 func AddGetMigrationCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "get-migration",
@@ -343,8 +374,8 @@ func AddGetMigrationCommand() *cobra.Command {
 			defer client.Close()
 
 			refID, refName := splitRef(id)
-			req := &migratorpb.GetMigrationsRequest{Id: refID, Name: refName}
-			resp, err := client.GetMigrations(cmd.Context(), req)
+			req := &migratorpb.GetMigrationRequest{Ref: toRef(refID, refName)}
+			resp, err := client.GetMigration(cmd.Context(), req)
 			if err != nil {
 				return fmt.Errorf("failed to get migration: %w", err)
 			}
@@ -379,8 +410,7 @@ func AddDropMigrationCommand() *cobra.Command {
 
 			refID, refName := splitRef(id)
 			req := &migratorpb.DropMigrationRequest{
-				Id:                 refID,
-				Name:               refName,
+				Ref:                toRef(refID, refName),
 				Wait:               wait,
 				WaitTimeoutSeconds: waitTimeout,
 				Force:              force,

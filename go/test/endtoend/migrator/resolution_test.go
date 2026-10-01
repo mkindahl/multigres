@@ -117,7 +117,7 @@ func TestCreateMigrationTableResolution(t *testing.T) {
 			// next case creates another.
 			id := resp.GetMigration().GetId()
 			t.Cleanup(func() {
-				_, err := mt.DropMigration(ctx, &migratorpb.DropMigrationRequest{Id: id, Force: true})
+				_, err := mt.DropMigration(ctx, &migratorpb.DropMigrationRequest{Ref: idRef(id), Force: true})
 				require.NoError(t, err)
 			})
 			// resolved order is unspecified (the query does not ORDER BY), so

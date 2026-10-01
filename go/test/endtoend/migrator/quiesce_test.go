@@ -88,7 +88,7 @@ func TestActivateHardQuiesceCutsOffSourceWriter(t *testing.T) {
 	})
 	require.NoError(t, err)
 	id := createResp.GetMigration().GetId()
-	_, err = mt.StartMigration(ctx, &migratorpb.StartMigrationRequest{Id: id})
+	_, err = mt.StartMigration(ctx, &migratorpb.StartMigrationRequest{Ref: idRef(id)})
 	require.NoError(t, err)
 
 	// A continuous writer as the app role, hammering the source across the cutover.
@@ -102,13 +102,13 @@ func TestActivateHardQuiesceCutsOffSourceWriter(t *testing.T) {
 		"writer must be inserting on the source before activation")
 
 	require.Eventually(t, func() bool {
-		resp, err := mt.GetMigrations(ctx, &migratorpb.GetMigrationsRequest{Id: id})
-		return err == nil && len(resp.GetMigrations()) == 1 && resp.GetMigrations()[0].GetStatus().GetCaughtUp()
+		resp, err := mt.GetMigration(ctx, &migratorpb.GetMigrationRequest{Ref: idRef(id)})
+		return err == nil && resp.GetStatus().GetCaughtUp()
 	}, 60*time.Second, 500*time.Millisecond, "IMPORT must catch up")
 
 	// Activate — the hard quiesce fences appRole (REVOKE CONNECT) and terminates its
 	// live backend before capturing the barrier LSN.
-	_, err = mt.ActivateMigration(ctx, &migratorpb.ActivateMigrationRequest{Id: id})
+	_, err = mt.ActivateMigration(ctx, &migratorpb.ActivateMigrationRequest{Ref: idRef(id)})
 	require.NoError(t, err)
 
 	// Once the switch has returned, the source is a subscriber and the app role is
@@ -138,7 +138,7 @@ func TestActivateHardQuiesceCutsOffSourceWriter(t *testing.T) {
 	}, 30*time.Second, 500*time.Millisecond,
 		"source and target must end byte-identical (no divergence from a stray subscriber-side write)")
 
-	_, err = mt.DropMigration(ctx, &migratorpb.DropMigrationRequest{Id: id, Force: true})
+	_, err = mt.DropMigration(ctx, &migratorpb.DropMigrationRequest{Ref: idRef(id), Force: true})
 	require.NoError(t, err)
 }
 

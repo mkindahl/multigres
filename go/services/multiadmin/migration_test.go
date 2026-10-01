@@ -39,7 +39,8 @@ type fakeMigratorServer struct {
 	update     *migratorpb.UpdateMigrationRequest
 	activate   *migratorpb.ActivateMigrationRequest
 	deactivate *migratorpb.DeactivateMigrationRequest
-	get        *migratorpb.GetMigrationsRequest
+	get        *migratorpb.GetMigrationRequest
+	list       *migratorpb.ListMigrationsRequest
 	drop       *migratorpb.DropMigrationRequest
 }
 
@@ -50,32 +51,37 @@ func (f *fakeMigratorServer) CreateMigration(_ context.Context, in *migratorpb.C
 
 func (f *fakeMigratorServer) StartMigration(_ context.Context, in *migratorpb.StartMigrationRequest) (*migratorpb.StartMigrationResponse, error) {
 	f.start = in
-	return &migratorpb.StartMigrationResponse{Migration: &migratorpb.Migration{Id: in.GetId()}}, nil
+	return &migratorpb.StartMigrationResponse{Migration: &migratorpb.Migration{Id: in.GetRef().GetId()}}, nil
 }
 
 func (f *fakeMigratorServer) UpdateMigration(_ context.Context, in *migratorpb.UpdateMigrationRequest) (*migratorpb.UpdateMigrationResponse, error) {
 	f.update = in
-	return &migratorpb.UpdateMigrationResponse{Migration: &migratorpb.Migration{Id: in.GetId()}}, nil
+	return &migratorpb.UpdateMigrationResponse{Migration: &migratorpb.Migration{Id: in.GetMigration().GetId()}}, nil
 }
 
 func (f *fakeMigratorServer) ActivateMigration(_ context.Context, in *migratorpb.ActivateMigrationRequest) (*migratorpb.ActivateMigrationResponse, error) {
 	f.activate = in
-	return &migratorpb.ActivateMigrationResponse{Migration: &migratorpb.Migration{Id: in.GetId()}}, nil
+	return &migratorpb.ActivateMigrationResponse{Migration: &migratorpb.Migration{Id: in.GetRef().GetId()}}, nil
 }
 
 func (f *fakeMigratorServer) DeactivateMigration(_ context.Context, in *migratorpb.DeactivateMigrationRequest) (*migratorpb.DeactivateMigrationResponse, error) {
 	f.deactivate = in
-	return &migratorpb.DeactivateMigrationResponse{Migration: &migratorpb.Migration{Id: in.GetId()}}, nil
+	return &migratorpb.DeactivateMigrationResponse{Migration: &migratorpb.Migration{Id: in.GetRef().GetId()}}, nil
 }
 
-func (f *fakeMigratorServer) GetMigrations(_ context.Context, in *migratorpb.GetMigrationsRequest) (*migratorpb.GetMigrationsResponse, error) {
+func (f *fakeMigratorServer) GetMigration(_ context.Context, in *migratorpb.GetMigrationRequest) (*migratorpb.GetMigrationResponse, error) {
 	f.get = in
-	return &migratorpb.GetMigrationsResponse{}, nil
+	return &migratorpb.GetMigrationResponse{}, nil
+}
+
+func (f *fakeMigratorServer) ListMigrations(_ context.Context, in *migratorpb.ListMigrationsRequest) (*migratorpb.ListMigrationsResponse, error) {
+	f.list = in
+	return &migratorpb.ListMigrationsResponse{}, nil
 }
 
 func (f *fakeMigratorServer) DropMigration(_ context.Context, in *migratorpb.DropMigrationRequest) (*migratorpb.DropMigrationResponse, error) {
 	f.drop = in
-	return &migratorpb.DropMigrationResponse{Migration: &migratorpb.Migration{Id: in.GetId()}}, nil
+	return &migratorpb.DropMigrationResponse{Migration: &migratorpb.Migration{Id: in.GetRef().GetId()}}, nil
 }
 
 // startFakeMigrator serves fakeMigratorServer over an in-process bufconn and
@@ -122,35 +128,45 @@ func TestMultiadminMigrationForwarders(t *testing.T) {
 		assert.Equal(t, "m1", fake.create.GetMigration().GetName())
 	})
 	t.Run("StartMigration", func(t *testing.T) {
-		_, err := server.StartMigration(ctx, &migratorpb.StartMigrationRequest{Id: 1})
+		_, err := server.StartMigration(ctx, &migratorpb.StartMigrationRequest{Ref: idRef(1)})
 		require.NoError(t, err)
-		assert.Equal(t, int64(1), fake.start.GetId())
+		assert.Equal(t, int64(1), fake.start.GetRef().GetId())
 	})
 	t.Run("UpdateMigration", func(t *testing.T) {
-		_, err := server.UpdateMigration(ctx, &migratorpb.UpdateMigrationRequest{Id: 1})
+		_, err := server.UpdateMigration(ctx, &migratorpb.UpdateMigrationRequest{Migration: &migratorpb.Migration{Id: 1}})
 		require.NoError(t, err)
-		assert.Equal(t, int64(1), fake.update.GetId())
+		assert.Equal(t, int64(1), fake.update.GetMigration().GetId())
 	})
 	t.Run("ActivateMigration", func(t *testing.T) {
-		_, err := server.ActivateMigration(ctx, &migratorpb.ActivateMigrationRequest{Id: 1})
+		_, err := server.ActivateMigration(ctx, &migratorpb.ActivateMigrationRequest{Ref: idRef(1)})
 		require.NoError(t, err)
-		assert.Equal(t, int64(1), fake.activate.GetId())
+		assert.Equal(t, int64(1), fake.activate.GetRef().GetId())
 	})
 	t.Run("DeactivateMigration", func(t *testing.T) {
-		_, err := server.DeactivateMigration(ctx, &migratorpb.DeactivateMigrationRequest{Id: 1})
+		_, err := server.DeactivateMigration(ctx, &migratorpb.DeactivateMigrationRequest{Ref: idRef(1)})
 		require.NoError(t, err)
-		assert.Equal(t, int64(1), fake.deactivate.GetId())
+		assert.Equal(t, int64(1), fake.deactivate.GetRef().GetId())
 	})
-	t.Run("GetMigrations", func(t *testing.T) {
-		_, err := server.GetMigrations(ctx, &migratorpb.GetMigrationsRequest{})
+	t.Run("GetMigration", func(t *testing.T) {
+		_, err := server.GetMigration(ctx, &migratorpb.GetMigrationRequest{Ref: idRef(1)})
 		require.NoError(t, err)
 		require.NotNil(t, fake.get)
 	})
-	t.Run("DropMigration", func(t *testing.T) {
-		_, err := server.DropMigration(ctx, &migratorpb.DropMigrationRequest{Id: 1})
+	t.Run("ListMigrations", func(t *testing.T) {
+		_, err := server.ListMigrations(ctx, &migratorpb.ListMigrationsRequest{})
 		require.NoError(t, err)
-		assert.Equal(t, int64(1), fake.drop.GetId())
+		require.NotNil(t, fake.list)
 	})
+	t.Run("DropMigration", func(t *testing.T) {
+		_, err := server.DropMigration(ctx, &migratorpb.DropMigrationRequest{Ref: idRef(1)})
+		require.NoError(t, err)
+		assert.Equal(t, int64(1), fake.drop.GetRef().GetId())
+	})
+}
+
+// idRef builds a MigrationRef addressed by id, for tests.
+func idRef(id int64) *migratorpb.MigrationRef {
+	return &migratorpb.MigrationRef{Ref: &migratorpb.MigrationRef_Id{Id: id}}
 }
 
 // callAllForwarders invokes every migration forwarder and returns the errors,
@@ -158,12 +174,13 @@ func TestMultiadminMigrationForwarders(t *testing.T) {
 func callAllForwarders(ctx context.Context, s *MultiadminServer) []error {
 	return []error{
 		firstErr(s.CreateMigration(ctx, &migratorpb.CreateMigrationRequest{Migration: &migratorpb.Migration{Name: "m1"}})),
-		firstErr(s.StartMigration(ctx, &migratorpb.StartMigrationRequest{Id: 1})),
-		firstErr(s.UpdateMigration(ctx, &migratorpb.UpdateMigrationRequest{Id: 1})),
-		firstErr(s.ActivateMigration(ctx, &migratorpb.ActivateMigrationRequest{Id: 1})),
-		firstErr(s.DeactivateMigration(ctx, &migratorpb.DeactivateMigrationRequest{Id: 1})),
-		firstErr(s.GetMigrations(ctx, &migratorpb.GetMigrationsRequest{})),
-		firstErr(s.DropMigration(ctx, &migratorpb.DropMigrationRequest{Id: 1})),
+		firstErr(s.StartMigration(ctx, &migratorpb.StartMigrationRequest{Ref: idRef(1)})),
+		firstErr(s.UpdateMigration(ctx, &migratorpb.UpdateMigrationRequest{Migration: &migratorpb.Migration{Id: 1}})),
+		firstErr(s.ActivateMigration(ctx, &migratorpb.ActivateMigrationRequest{Ref: idRef(1)})),
+		firstErr(s.DeactivateMigration(ctx, &migratorpb.DeactivateMigrationRequest{Ref: idRef(1)})),
+		firstErr(s.GetMigration(ctx, &migratorpb.GetMigrationRequest{Ref: idRef(1)})),
+		firstErr(s.ListMigrations(ctx, &migratorpb.ListMigrationsRequest{})),
+		firstErr(s.DropMigration(ctx, &migratorpb.DropMigrationRequest{Ref: idRef(1)})),
 	}
 }
 

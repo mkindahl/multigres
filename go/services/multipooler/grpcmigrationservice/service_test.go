@@ -122,11 +122,3 @@ func TestStatusToProto(t *testing.T) {
 	// StreamingSince is optional: nil in, nil out.
 	require.Nil(t, statusToProto(&migration.Projection{ID: 2}).GetStreamingSince())
 }
-
-func TestInfoToProto(t *testing.T) {
-	p := &migration.Projection{ID: 1, Name: "nightly", Phase: migration.PhaseExporting}
-	got := infoToProto(p)
-	require.Equal(t, int64(1), got.GetMigration().GetId())
-	require.Equal(t, "nightly", got.GetMigration().GetName())
-	require.Equal(t, migratorpb.MigrationPhase_MIGRATION_PHASE_EXPORTING, got.GetStatus().GetPhase())
-}

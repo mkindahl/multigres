@@ -64,7 +64,7 @@ func (s *migrationService) CreateMigration(ctx context.Context, req *migratorpb.
 		Tables:         foldTableSelection(req.GetMigration().GetObjects()),
 		CopyData:       !req.SkipCopyData,
 		SkipSchemaCopy: req.SkipSchemaCopy,
-		SequenceMargin: req.SequenceMargin,
+		SequenceMargin: req.GetMigration().GetSequenceMargin(),
 		QuiesceRoles:   req.QuiesceRoles,
 	})
 	if err != nil {
@@ -113,34 +113,42 @@ func (s *migrationService) StartMigration(ctx context.Context, req *migratorpb.S
 	if err != nil {
 		return nil, toGRPC(err)
 	}
-	proj, err := coord.StartMigration(ctx, migrationRef(req.Id, req.Name))
+	proj, err := coord.StartMigration(ctx, migrationRef(req.GetRef().GetId(), req.GetRef().GetName()))
 	if err != nil {
 		return nil, toGRPC(err)
 	}
 	return &migratorpb.StartMigrationResponse{Migration: migToProto(proj), Status: statusToProto(proj)}, nil
 }
 
-func (s *migrationService) GetMigrations(ctx context.Context, req *migratorpb.GetMigrationsRequest) (*migratorpb.GetMigrationsResponse, error) {
+func (s *migrationService) GetMigration(ctx context.Context, req *migratorpb.GetMigrationRequest) (*migratorpb.GetMigrationResponse, error) {
 	coord, err := s.manager.MigrationCoordinatorIfPrimary(ctx)
 	if err != nil {
 		return nil, toGRPC(err)
 	}
-	if ref := migrationRef(req.Id, req.Name); ref.ID != 0 || ref.Name != "" {
-		proj, err := coord.GetMigration(ctx, ref)
-		if err != nil {
-			return nil, toGRPC(err)
-		}
-		return &migratorpb.GetMigrationsResponse{Migrations: []*migratorpb.MigrationInfo{infoToProto(proj)}}, nil
+	proj, err := coord.GetMigration(ctx, migrationRef(req.GetRef().GetId(), req.GetRef().GetName()))
+	if err != nil {
+		return nil, toGRPC(err)
+	}
+	return &migratorpb.GetMigrationResponse{Migration: migToProto(proj), Status: statusToProto(proj)}, nil
+}
+
+// ListMigrations returns the ids of every migration. At most one migration
+// exists at a time today (CreateMigration enforces it), so this returns 0 or
+// 1 ids; callers fetch full details for each via GetMigration.
+func (s *migrationService) ListMigrations(ctx context.Context, _ *migratorpb.ListMigrationsRequest) (*migratorpb.ListMigrationsResponse, error) {
+	coord, err := s.manager.MigrationCoordinatorIfPrimary(ctx)
+	if err != nil {
+		return nil, toGRPC(err)
 	}
 	projs, err := coord.ListMigrations(ctx)
 	if err != nil {
 		return nil, toGRPC(err)
 	}
-	out := make([]*migratorpb.MigrationInfo, len(projs))
+	ids := make([]int64, len(projs))
 	for i, p := range projs {
-		out[i] = infoToProto(p)
+		ids[i] = p.ID
 	}
-	return &migratorpb.GetMigrationsResponse{Migrations: out}, nil
+	return &migratorpb.ListMigrationsResponse{Ids: ids}, nil
 }
 
 func (s *migrationService) GetMigrationJournal(ctx context.Context, req *migratorpb.GetMigrationJournalRequest) (*migratorpb.GetMigrationJournalResponse, error) {
@@ -164,7 +172,7 @@ func (s *migrationService) DropMigration(ctx context.Context, req *migratorpb.Dr
 	if err != nil {
 		return nil, toGRPC(err)
 	}
-	proj, err := coord.DropMigration(ctx, migrationRef(req.Id, req.Name), migration.DropOptions{
+	proj, err := coord.DropMigration(ctx, migrationRef(req.GetRef().GetId(), req.GetRef().GetName()), migration.DropOptions{
 		Wait:        req.Wait,
 		WaitTimeout: time.Duration(req.WaitTimeoutSeconds) * time.Second,
 		Force:       req.Force,
@@ -187,19 +195,19 @@ func (s *migrationService) UpdateMigration(ctx context.Context, req *migratorpb.
 	for _, path := range req.UpdateMask.Paths {
 		switch path {
 		case "source_dsn":
-			v := req.SourceDsn
+			v := req.GetMigration().GetSourceDsn()
 			p.SourceDSN = &v
 		case "sequence_margin":
-			v := req.SequenceMargin
+			v := req.GetMigration().GetSequenceMargin()
 			p.SequenceMargin = &v
-		case "tables":
-			v := req.Tables
+		case "objects":
+			v := foldTableSelection(req.GetMigration().GetObjects())
 			p.Tables = &v
 		default:
 			return nil, status.Errorf(codes.InvalidArgument, "unsupported update_mask path %q", path)
 		}
 	}
-	proj, err := coord.UpdateMigration(ctx, migrationRef(req.Id, req.Name), p)
+	proj, err := coord.UpdateMigration(ctx, migrationRef(req.GetMigration().GetId(), req.GetMigration().GetName()), p)
 	if err != nil {
 		return nil, toGRPC(err)
 	}
@@ -212,10 +220,10 @@ func (s *migrationService) ActivateMigration(ctx context.Context, req *migratorp
 		return nil, toGRPC(err)
 	}
 	opts := migration.ActivateOptions{
-		MaxLagBytes: req.MaxLagBytes,
-		WaitTimeout: time.Duration(req.WaitTimeoutSeconds) * time.Second,
+		MaxLagBytes: req.GetMaxLagBytes(),
+		WaitTimeout: time.Duration(req.GetWaitTimeoutSeconds()) * time.Second,
 	}
-	proj, err := coord.Activate(ctx, migrationRef(req.Id, req.Name), opts)
+	proj, err := coord.Activate(ctx, migrationRef(req.GetRef().GetId(), req.GetRef().GetName()), opts)
 	if err != nil {
 		return nil, toGRPC(err)
 	}
@@ -227,7 +235,7 @@ func (s *migrationService) DeactivateMigration(ctx context.Context, req *migrato
 	if err != nil {
 		return nil, toGRPC(err)
 	}
-	proj, err := coord.Deactivate(ctx, migrationRef(req.Id, req.Name))
+	proj, err := coord.Deactivate(ctx, migrationRef(req.GetRef().GetId(), req.GetRef().GetName()))
 	if err != nil {
 		return nil, toGRPC(err)
 	}
@@ -257,6 +265,7 @@ func migToProto(p *migration.Projection) *migratorpb.Migration {
 		TargetDatabase: p.TargetDatabase,
 		TargetShard:    p.TargetShard,
 		Objects:        tablesToSelectionObject(p.Tables),
+		SequenceMargin: p.SequenceMargin,
 	}
 }
 
@@ -291,15 +300,6 @@ func statusToProto(p *migration.Projection) *migratorpb.MigrationStatus {
 		s.StreamingSince = timestamppb.New(*p.StreamingSince)
 	}
 	return s
-}
-
-// infoToProto pairs a projection's static configuration with its live status,
-// for the RPCs that return more than one migration at a time.
-func infoToProto(p *migration.Projection) *migratorpb.MigrationInfo {
-	return &migratorpb.MigrationInfo{
-		Migration: migToProto(p),
-		Status:    statusToProto(p),
-	}
 }
 
 // journalEntryToProto maps a coordinator journal entry to its proto form. The

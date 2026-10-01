@@ -46,7 +46,11 @@ func (failMigrator) UpdateMigration(context.Context, *migratorpb.UpdateMigration
 	return nil, errBackend
 }
 
-func (failMigrator) GetMigrations(context.Context, *migratorpb.GetMigrationsRequest, ...grpc.CallOption) (*migratorpb.GetMigrationsResponse, error) {
+func (failMigrator) GetMigration(context.Context, *migratorpb.GetMigrationRequest, ...grpc.CallOption) (*migratorpb.GetMigrationResponse, error) {
+	return nil, errBackend
+}
+
+func (failMigrator) ListMigrations(context.Context, *migratorpb.ListMigrationsRequest, ...grpc.CallOption) (*migratorpb.ListMigrationsResponse, error) {
 	return nil, errBackend
 }
 
@@ -354,7 +358,7 @@ func TestMigrationDDLHelpers_selectionObjects(t *testing.T) {
 }
 
 func TestMigrationDDLHelpers_applyMigrationOptions(t *testing.T) {
-	req := &migratorpb.CreateMigrationRequest{}
+	req := &migratorpb.CreateMigrationRequest{Migration: &migratorpb.Migration{}}
 	require.NoError(t, applyMigrationOptions(req, nil))
 
 	list := ast.NewNodeList(
@@ -366,7 +370,7 @@ func TestMigrationDDLHelpers_applyMigrationOptions(t *testing.T) {
 	require.NoError(t, applyMigrationOptions(req, list))
 	assert.True(t, req.GetSkipCopyData(), "copy_data=false inverts to skip_copy_data=true")
 	assert.True(t, req.GetSkipSchemaCopy())
-	assert.Equal(t, int64(9), req.GetSequenceMargin())
+	assert.Equal(t, int64(9), req.GetMigration().GetSequenceMargin())
 
 	assert.ErrorContains(t, applyMigrationOptions(&migratorpb.CreateMigrationRequest{},
 		ast.NewNodeList(defElem("sequence_margin", "x"))), "integer")
@@ -420,7 +424,7 @@ func TestMigrationDDLHelpers_applyActivateOptions(t *testing.T) {
 }
 
 func TestMigrationDDLHelpers_applyUpdateOptions(t *testing.T) {
-	req := &migratorpb.UpdateMigrationRequest{}
+	req := &migratorpb.UpdateMigrationRequest{Migration: &migratorpb.Migration{}}
 	paths, err := applyUpdateOptions(req, nil)
 	require.NoError(t, err)
 	assert.Empty(t, paths)
@@ -431,12 +435,12 @@ func TestMigrationDDLHelpers_applyUpdateOptions(t *testing.T) {
 	))
 	require.NoError(t, err)
 	assert.Equal(t, []string{"sequence_margin"}, paths)
-	assert.Equal(t, int64(12), req.GetSequenceMargin())
+	assert.Equal(t, int64(12), req.GetMigration().GetSequenceMargin())
 
-	_, err = applyUpdateOptions(&migratorpb.UpdateMigrationRequest{},
+	_, err = applyUpdateOptions(&migratorpb.UpdateMigrationRequest{Migration: &migratorpb.Migration{}},
 		ast.NewNodeList(defElem("sequence_margin", "x")))
 	assert.ErrorContains(t, err, "integer")
-	_, err = applyUpdateOptions(&migratorpb.UpdateMigrationRequest{},
+	_, err = applyUpdateOptions(&migratorpb.UpdateMigrationRequest{Migration: &migratorpb.Migration{}},
 		ast.NewNodeList(defElem("copy_data", "true")))
 	assert.ErrorContains(t, err, "cannot be changed")
 }

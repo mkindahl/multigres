@@ -35,9 +35,10 @@ type fakeMigrator struct {
 	deactivate *migratorpb.DeactivateMigrationRequest
 	update     *migratorpb.UpdateMigrationRequest
 	drop       *migratorpb.DropMigrationRequest
-	get        *migratorpb.GetMigrationsRequest
+	get        *migratorpb.GetMigrationRequest
+	list       *migratorpb.ListMigrationsRequest
 	getJournal *migratorpb.GetMigrationJournalRequest
-	migrations []*migratorpb.MigrationInfo
+	migrations []*migratorpb.GetMigrationResponse
 }
 
 func (f *fakeMigrator) CreateMigration(_ context.Context, in *migratorpb.CreateMigrationRequest, _ ...grpc.CallOption) (*migratorpb.CreateMigrationResponse, error) {
@@ -55,9 +56,21 @@ func (f *fakeMigrator) UpdateMigration(_ context.Context, in *migratorpb.UpdateM
 	return &migratorpb.UpdateMigrationResponse{}, nil
 }
 
-func (f *fakeMigrator) GetMigrations(_ context.Context, in *migratorpb.GetMigrationsRequest, _ ...grpc.CallOption) (*migratorpb.GetMigrationsResponse, error) {
+func (f *fakeMigrator) GetMigration(_ context.Context, in *migratorpb.GetMigrationRequest, _ ...grpc.CallOption) (*migratorpb.GetMigrationResponse, error) {
 	f.get = in
-	return &migratorpb.GetMigrationsResponse{Migrations: f.migrations}, nil
+	if len(f.migrations) > 0 {
+		return f.migrations[0], nil
+	}
+	return &migratorpb.GetMigrationResponse{}, nil
+}
+
+func (f *fakeMigrator) ListMigrations(_ context.Context, in *migratorpb.ListMigrationsRequest, _ ...grpc.CallOption) (*migratorpb.ListMigrationsResponse, error) {
+	f.list = in
+	ids := make([]int64, len(f.migrations))
+	for i, mi := range f.migrations {
+		ids[i] = mi.GetMigration().GetId()
+	}
+	return &migratorpb.ListMigrationsResponse{Ids: ids}, nil
 }
 
 func (f *fakeMigrator) ActivateMigration(_ context.Context, in *migratorpb.ActivateMigrationRequest, _ ...grpc.CallOption) (*migratorpb.ActivateMigrationResponse, error) {
@@ -174,7 +187,7 @@ func TestMigrationDDL_CreateMigration(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"orders", "customers"}, fake.create.GetMigration().GetObjects().GetTable().GetQualifiedNames())
 	assert.True(t, fake.create.GetSkipCopyData())
-	assert.Equal(t, int64(5), fake.create.GetSequenceMargin())
+	assert.Equal(t, int64(5), fake.create.GetMigration().GetSequenceMargin())
 
 	// schema selection
 	_, err = runSQL(t, backend, "CREATE MIGRATION m3 CONNECTION onprem FOR TABLES IN SCHEMA public")
@@ -194,25 +207,25 @@ func TestMigrationDDL_LifecycleAndDrop(t *testing.T) {
 	_, err := runSQL(t, backend, "ALTER MIGRATION m START")
 	require.NoError(t, err)
 	require.NotNil(t, fake.start)
-	assert.Equal(t, "m", fake.start.GetName())
+	assert.Equal(t, "m", fake.start.GetRef().GetName())
 
 	_, err = runSQL(t, backend, "ALTER MIGRATION m ACTIVATE")
 	require.NoError(t, err)
-	assert.Equal(t, "m", fake.activate.GetName())
+	assert.Equal(t, "m", fake.activate.GetRef().GetName())
 
 	_, err = runSQL(t, backend, "ALTER MIGRATION m DEACTIVATE")
 	require.NoError(t, err)
-	assert.Equal(t, "m", fake.deactivate.GetName())
+	assert.Equal(t, "m", fake.deactivate.GetRef().GetName())
 
 	_, err = runSQL(t, backend, "ALTER MIGRATION m CONNECTION c")
 	require.NoError(t, err)
 	require.NotNil(t, fake.update)
-	assert.Equal(t, "host=x", fake.update.GetSourceDsn())
+	assert.Equal(t, "host=x", fake.update.GetMigration().GetSourceDsn())
 	assert.Equal(t, []string{"source_dsn"}, fake.update.GetUpdateMask().GetPaths())
 
 	_, err = runSQL(t, backend, "ALTER MIGRATION m SET (sequence_margin = 42)")
 	require.NoError(t, err)
-	assert.Equal(t, int64(42), fake.update.GetSequenceMargin())
+	assert.Equal(t, int64(42), fake.update.GetMigration().GetSequenceMargin())
 	assert.Equal(t, []string{"sequence_margin"}, fake.update.GetUpdateMask().GetPaths())
 
 	_, err = runSQL(t, backend, "DROP MIGRATION m FORCE")
@@ -228,7 +241,7 @@ func TestMigrationDDL_LifecycleAndDrop(t *testing.T) {
 
 func TestMigrationDDL_ShowMigrations(t *testing.T) {
 	copyDone := true
-	fake := &fakeMigrator{migrations: []*migratorpb.MigrationInfo{
+	fake := &fakeMigrator{migrations: []*migratorpb.GetMigrationResponse{
 		{
 			Migration: &migratorpb.Migration{
 				Name: "orders_move", Id: 1, SourceDsn: "host=src",
@@ -248,7 +261,7 @@ func TestMigrationDDL_ShowMigrations(t *testing.T) {
 
 	res, err := runSQL(t, backend, "SHOW MIGRATION orders_move")
 	require.NoError(t, err)
-	assert.Equal(t, "orders_move", fake.get.GetName())
+	assert.Equal(t, "orders_move", fake.get.GetRef().GetName())
 	require.Len(t, res.Rows, 1)
 	require.Len(t, res.Fields, 13)
 	assert.Equal(t, "lag_bytes", res.Fields[10].Name)

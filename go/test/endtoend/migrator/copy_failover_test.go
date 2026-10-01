@@ -109,7 +109,7 @@ func TestTargetFailoverDuringCopy(t *testing.T) {
 	})
 	require.NoError(t, err)
 	id := createResp.GetMigration().GetId()
-	_, err = mt.StartMigration(ctx, &migratorpb.StartMigrationRequest{Id: id})
+	_, err = mt.StartMigration(ctx, &migratorpb.StartMigrationRequest{Ref: idRef(id)})
 	require.NoError(t, err)
 	mtClose()
 

@@ -269,6 +269,16 @@ func (m *MigrationDDL) createMigration(ctx context.Context, s *ast.CreateMigrati
 	return commandTag("CREATE MIGRATION"), nil
 }
 
+// refByName addresses a migration by its unique name, for the DDL primitive's
+// ALTER/DROP/SHOW statements (which only ever carry a name, not an id).
+func refByName(name string) *migratorpb.MigrationRef {
+	return &migratorpb.MigrationRef{Ref: &migratorpb.MigrationRef_Name{Name: name}}
+}
+
+func refByID(id int64) *migratorpb.MigrationRef {
+	return &migratorpb.MigrationRef{Ref: &migratorpb.MigrationRef_Id{Id: id}}
+}
+
 func (m *MigrationDDL) alterMigration(ctx context.Context, s *ast.AlterMigrationStmt) (*sqltypes.Result, error) {
 	client, err := m.backend.client()
 	if err != nil {
@@ -276,27 +286,26 @@ func (m *MigrationDDL) alterMigration(ctx context.Context, s *ast.AlterMigration
 	}
 	switch s.Action {
 	case ast.MigrationActionStart:
-		_, err = client.StartMigration(ctx, &migratorpb.StartMigrationRequest{Name: s.Name})
+		_, err = client.StartMigration(ctx, &migratorpb.StartMigrationRequest{Ref: refByName(s.Name)})
 	case ast.MigrationActionActivate:
-		req := &migratorpb.ActivateMigrationRequest{Name: s.Name}
+		req := &migratorpb.ActivateMigrationRequest{Ref: refByName(s.Name)}
 		if err = applyActivateOptions(req, s.Options); err != nil {
 			return nil, err
 		}
 		_, err = client.ActivateMigration(ctx, req)
 	case ast.MigrationActionDeactivate:
-		_, err = client.DeactivateMigration(ctx, &migratorpb.DeactivateMigrationRequest{Name: s.Name})
+		_, err = client.DeactivateMigration(ctx, &migratorpb.DeactivateMigrationRequest{Ref: refByName(s.Name)})
 	case ast.MigrationActionSetConnection:
 		dsn, ok := m.backend.Conns.Get(s.Connection)
 		if !ok {
 			return nil, fmt.Errorf("connection %q does not exist", s.Connection)
 		}
 		_, err = client.UpdateMigration(ctx, &migratorpb.UpdateMigrationRequest{
-			Name:       s.Name,
-			SourceDsn:  dsn,
+			Migration:  &migratorpb.Migration{Name: s.Name, SourceDsn: dsn},
 			UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"source_dsn"}},
 		})
 	case ast.MigrationActionSetOptions:
-		req := &migratorpb.UpdateMigrationRequest{Name: s.Name}
+		req := &migratorpb.UpdateMigrationRequest{Migration: &migratorpb.Migration{Name: s.Name}}
 		var paths []string
 		paths, err = applyUpdateOptions(req, s.Options)
 		if err != nil {
@@ -320,7 +329,7 @@ func (m *MigrationDDL) dropMigration(ctx context.Context, s *ast.DropMigrationSt
 	}
 	for _, name := range nameList(s.Names) {
 		req := &migratorpb.DropMigrationRequest{
-			Name:  name,
+			Ref:   refByName(name),
 			Force: s.Force,
 			Wait:  s.Wait,
 		}
@@ -338,12 +347,39 @@ func (m *MigrationDDL) dropMigration(ctx context.Context, s *ast.DropMigrationSt
 	return commandTag("DROP MIGRATION"), nil
 }
 
+// fetchMigrations returns one migration by name, or every migration when name
+// is empty: it lists ids via ListMigrations and fetches each one's full info
+// via GetMigration (GetMigrationsResponse no longer carries a "list all"
+// shape now that GetMigration returns exactly one migration).
+func fetchMigrations(ctx context.Context, client migratorpb.MigratorClient, name string) ([]*migratorpb.GetMigrationResponse, error) {
+	if name != "" {
+		resp, err := client.GetMigration(ctx, &migratorpb.GetMigrationRequest{Ref: refByName(name)})
+		if err != nil {
+			return nil, err
+		}
+		return []*migratorpb.GetMigrationResponse{resp}, nil
+	}
+	list, err := client.ListMigrations(ctx, &migratorpb.ListMigrationsRequest{})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*migratorpb.GetMigrationResponse, 0, len(list.GetIds()))
+	for _, id := range list.GetIds() {
+		resp, err := client.GetMigration(ctx, &migratorpb.GetMigrationRequest{Ref: refByID(id)})
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, resp)
+	}
+	return out, nil
+}
+
 func (m *MigrationDDL) showMigrations(ctx context.Context, s *ast.ShowMigrationsStmt, includeFields bool) (*sqltypes.Result, error) {
 	client, err := m.backend.client()
 	if err != nil {
 		return nil, err
 	}
-	resp, err := client.GetMigrations(ctx, &migratorpb.GetMigrationsRequest{Name: s.Name})
+	migrations, err := fetchMigrations(ctx, client, s.Name)
 	if err != nil {
 		return nil, err
 	}
@@ -355,11 +391,11 @@ func (m *MigrationDDL) showMigrations(ctx context.Context, s *ast.ShowMigrations
 		"phase", "active_direction", "total_relations", "ready_relations",
 		"caught_up", "lag_bytes", "lag_seconds", "last_error",
 	}
-	result := &sqltypes.Result{CommandTag: fmt.Sprintf("SELECT %d", len(resp.GetMigrations()))}
+	result := &sqltypes.Result{CommandTag: fmt.Sprintf("SELECT %d", len(migrations))}
 	if includeFields {
 		result.Fields = textFields(cols)
 	}
-	for _, mig := range resp.GetMigrations() {
+	for _, mig := range migrations {
 		cfg, st := mig.GetMigration(), mig.GetStatus()
 		result.Rows = append(result.Rows, sqltypes.MakeRow([][]byte{
 			[]byte(cfg.GetName()),
@@ -582,13 +618,13 @@ func applyActivateOptions(req *migratorpb.ActivateMigrationRequest, list *ast.No
 			if err != nil {
 				return fmt.Errorf("max_lag_bytes: %w", err)
 			}
-			req.MaxLagBytes = n
+			req.MaxLagBytes = &n
 		case "wait_timeout":
 			secs, err := parseTimeoutSeconds(val)
 			if err != nil {
 				return err
 			}
-			req.WaitTimeoutSeconds = secs
+			req.WaitTimeoutSeconds = &secs
 		default:
 			return fmt.Errorf("unknown ACTIVATE option %q", d.Defname)
 		}
@@ -639,7 +675,7 @@ func applyMigrationOptions(req *migratorpb.CreateMigrationRequest, list *ast.Nod
 			if err != nil {
 				return fmt.Errorf("sequence_margin must be an integer: %q", val)
 			}
-			req.SequenceMargin = n
+			req.Migration.SequenceMargin = n
 		case "quiesce_roles":
 			req.QuiesceRoles = parseRoleList(val)
 		default:
@@ -668,7 +704,7 @@ func applyUpdateOptions(req *migratorpb.UpdateMigrationRequest, list *ast.NodeLi
 			if err != nil {
 				return nil, fmt.Errorf("sequence_margin must be an integer: %q", val)
 			}
-			req.SequenceMargin = n
+			req.Migration.SequenceMargin = n
 			paths = append(paths, "sequence_margin")
 		default:
 			return nil, fmt.Errorf("option %q cannot be changed with ALTER MIGRATION ... SET", d.Defname)

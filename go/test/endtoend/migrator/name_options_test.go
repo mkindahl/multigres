@@ -87,17 +87,16 @@ func TestNamedMigrationAndOptions(t *testing.T) {
 	require.ErrorContains(t, err, "already exists")
 
 	// Address the migration by name for the rest of the workflow.
-	_, err = mt.StartMigration(ctx, &migratorpb.StartMigrationRequest{Name: "nightly"})
+	_, err = mt.StartMigration(ctx, &migratorpb.StartMigrationRequest{Ref: nameRef("nightly")})
 	require.NoError(t, err)
 
 	require.Eventually(t, func() bool {
-		resp, err := mt.GetMigrations(ctx, &migratorpb.GetMigrationsRequest{Name: "nightly"})
-		if err != nil || len(resp.GetMigrations()) == 0 {
+		resp, err := mt.GetMigration(ctx, &migratorpb.GetMigrationRequest{Ref: nameRef("nightly")})
+		if err != nil {
 			return false
 		}
-		m := resp.GetMigrations()[0]
-		require.Equal(t, id, m.GetMigration().GetId(), "lookup by name must resolve to the same migration")
-		return m.GetStatus().GetCaughtUp()
+		require.Equal(t, id, resp.GetMigration().GetId(), "lookup by name must resolve to the same migration")
+		return resp.GetStatus().GetCaughtUp()
 	}, 60*time.Second, 500*time.Millisecond, "migration must catch up")
 
 	// skip_copy_data: the 3 pre-existing source rows were NOT copied.
@@ -116,8 +115,8 @@ func TestNamedMigrationAndOptions(t *testing.T) {
 	}, 30*time.Second, 500*time.Millisecond, "streamed insert must reach the target")
 
 	// Drop by name (force: this test does not exercise the drain barrier).
-	_, err = mt.DropMigration(ctx, &migratorpb.DropMigrationRequest{Name: "nightly", Force: true})
+	_, err = mt.DropMigration(ctx, &migratorpb.DropMigrationRequest{Ref: nameRef("nightly"), Force: true})
 	require.NoError(t, err)
-	_, err = mt.GetMigrations(ctx, &migratorpb.GetMigrationsRequest{Name: "nightly"})
+	_, err = mt.GetMigration(ctx, &migratorpb.GetMigrationRequest{Ref: nameRef("nightly")})
 	require.Error(t, err, "migration must be gone after drop")
 }

@@ -107,11 +107,11 @@ func TestMigrationJournalLifecycle(t *testing.T) {
 	events, _ := journalEvents(t, ctx, mt, id)
 	require.Equal(t, []string{"CREATE"}, events, "create records exactly one journal entry")
 
-	_, err = mt.StartMigration(ctx, &migratorpb.StartMigrationRequest{Id: id})
+	_, err = mt.StartMigration(ctx, &migratorpb.StartMigrationRequest{Ref: idRef(id)})
 	require.NoError(t, err)
 	require.Eventually(t, func() bool {
-		resp, err := mt.GetMigrations(ctx, &migratorpb.GetMigrationsRequest{Id: id})
-		return err == nil && len(resp.GetMigrations()) == 1 && resp.GetMigrations()[0].GetStatus().GetCaughtUp()
+		resp, err := mt.GetMigration(ctx, &migratorpb.GetMigrationRequest{Ref: idRef(id)})
+		return err == nil && resp.GetStatus().GetCaughtUp()
 	}, 60*time.Second, 500*time.Millisecond, "IMPORT must catch up")
 
 	// After start + catch-up, START and the phase advances (including COPYING ->
@@ -121,7 +121,7 @@ func TestMigrationJournalLifecycle(t *testing.T) {
 		"start records START then phase advances, got %v", events)
 
 	// Activate: IMPORT -> EXPORT. The handoff entry records both LSNs.
-	_, err = mt.ActivateMigration(ctx, &migratorpb.ActivateMigrationRequest{Id: id})
+	_, err = mt.ActivateMigration(ctx, &migratorpb.ActivateMigrationRequest{Ref: idRef(id)})
 	require.NoError(t, err)
 	events, entries := journalEvents(t, ctx, mt, id)
 	require.Contains(t, events, "ACTIVATE")
@@ -133,11 +133,11 @@ func TestMigrationJournalLifecycle(t *testing.T) {
 	require.Equal(t, "ledger", activate.GetMigrationName(), "the migration name is denormalized into the entry")
 
 	// Deactivate: EXPORT -> IMPORT.
-	_, err = mt.DeactivateMigration(ctx, &migratorpb.DeactivateMigrationRequest{Id: id})
+	_, err = mt.DeactivateMigration(ctx, &migratorpb.DeactivateMigrationRequest{Ref: idRef(id)})
 	require.NoError(t, err)
 	require.Eventually(t, func() bool {
-		resp, err := mt.GetMigrations(ctx, &migratorpb.GetMigrationsRequest{Id: id})
-		return err == nil && len(resp.GetMigrations()) == 1 && resp.GetMigrations()[0].GetStatus().GetCaughtUp()
+		resp, err := mt.GetMigration(ctx, &migratorpb.GetMigrationRequest{Ref: idRef(id)})
+		return err == nil && resp.GetStatus().GetCaughtUp()
 	}, 30*time.Second, 500*time.Millisecond, "IMPORT must catch up again after deactivate")
 	events, entries = journalEvents(t, ctx, mt, id)
 	require.Contains(t, events, "DEACTIVATE")
@@ -147,11 +147,11 @@ func TestMigrationJournalLifecycle(t *testing.T) {
 	require.NotEmpty(t, deactivate.GetFromLsn(), "DEACTIVATE records the drained-to (quiesce) LSN")
 
 	// Drop (graceful): tears the migration down and removes its row.
-	_, err = mt.DropMigration(ctx, &migratorpb.DropMigrationRequest{Id: id, Wait: true, WaitTimeoutSeconds: 30})
+	_, err = mt.DropMigration(ctx, &migratorpb.DropMigrationRequest{Ref: idRef(id), Wait: true, WaitTimeoutSeconds: 30})
 	require.NoError(t, err)
 
 	// The migration row is gone from the live projection...
-	getResp, err := mt.GetMigrations(ctx, &migratorpb.GetMigrationsRequest{Id: id})
+	getResp, err := mt.GetMigration(ctx, &migratorpb.GetMigrationRequest{Ref: idRef(id)})
 	require.Error(t, err, "the dropped migration must no longer be found in the live projection: %v", getResp)
 
 	// ...but its journal is retained and addressable by id, ending with DROP.

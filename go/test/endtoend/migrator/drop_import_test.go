@@ -67,11 +67,11 @@ func TestGracefulDropOfImportingMigration(t *testing.T) {
 	require.NoError(t, err)
 	id := createResp.GetMigration().GetId()
 
-	_, err = mt.StartMigration(ctx, &migratorpb.StartMigrationRequest{Id: id})
+	_, err = mt.StartMigration(ctx, &migratorpb.StartMigrationRequest{Ref: idRef(id)})
 	require.NoError(t, err)
 	require.Eventually(t, func() bool {
-		resp, err := mt.GetMigrations(ctx, &migratorpb.GetMigrationsRequest{Id: id})
-		return err == nil && len(resp.GetMigrations()) == 1 && resp.GetMigrations()[0].GetStatus().GetCaughtUp()
+		resp, err := mt.GetMigration(ctx, &migratorpb.GetMigrationRequest{Ref: idRef(id)})
+		return err == nil && resp.GetStatus().GetCaughtUp()
 	}, 60*time.Second, 500*time.Millisecond, "IMPORT must catch up")
 
 	// A caught-up IMPORTING migration holds serving (the shard is a migration target).
@@ -83,11 +83,11 @@ func TestGracefulDropOfImportingMigration(t *testing.T) {
 	// the IMPORT-side objects. Bound it so a regression fails as a timeout.
 	dropCtx, dropCancel := context.WithTimeout(ctx, 45*time.Second)
 	defer dropCancel()
-	_, err = mt.DropMigration(dropCtx, &migratorpb.DropMigrationRequest{Id: id})
+	_, err = mt.DropMigration(dropCtx, &migratorpb.DropMigrationRequest{Ref: idRef(id)})
 	require.NoError(t, err, "graceful drop of a caught-up IMPORTING migration must complete")
 
 	// The migration is gone and serving is restored (the gate releases).
-	_, err = mt.GetMigrations(ctx, &migratorpb.GetMigrationsRequest{Id: id})
+	_, err = mt.GetMigration(ctx, &migratorpb.GetMigrationRequest{Ref: idRef(id)})
 	require.Error(t, err, "the dropped migration must no longer resolve")
 	requireServingStatus(t, ctx, grpcPort, clustermetadatapb.PoolerServingStatus_SERVING,
 		"after a graceful drop the shard serves again")

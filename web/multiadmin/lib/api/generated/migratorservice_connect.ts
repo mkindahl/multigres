@@ -17,7 +17,7 @@
 /* eslint-disable */
 // @ts-nocheck
 
-import { ActivateMigrationRequest, ActivateMigrationResponse, CreateMigrationRequest, CreateMigrationResponse, DeactivateMigrationRequest, DeactivateMigrationResponse, DropMigrationRequest, DropMigrationResponse, GetMigrationJournalRequest, GetMigrationJournalResponse, GetMigrationsRequest, GetMigrationsResponse, StartMigrationRequest, StartMigrationResponse, UpdateMigrationRequest, UpdateMigrationResponse } from "./migratorservice_pb";
+import { ActivateMigrationRequest, ActivateMigrationResponse, CreateMigrationRequest, CreateMigrationResponse, DeactivateMigrationRequest, DeactivateMigrationResponse, DropMigrationRequest, DropMigrationResponse, GetMigrationJournalRequest, GetMigrationJournalResponse, GetMigrationRequest, GetMigrationResponse, ListMigrationsRequest, ListMigrationsResponse, StartMigrationRequest, StartMigrationResponse, UpdateMigrationRequest, UpdateMigrationResponse } from "./migratorservice_pb";
 import { MethodKind } from "@bufbuild/protobuf";
 
 /**
@@ -65,14 +65,26 @@ export const Migrator = {
       kind: MethodKind.Unary,
     },
     /**
-     * GetMigrations returns status for one migration (id set) or all migrations.
+     * GetMigration returns status for one migration, addressed by ref (id or name).
      *
-     * @generated from rpc migrator.Migrator.GetMigrations
+     * @generated from rpc migrator.Migrator.GetMigration
      */
-    getMigrations: {
-      name: "GetMigrations",
-      I: GetMigrationsRequest,
-      O: GetMigrationsResponse,
+    getMigration: {
+      name: "GetMigration",
+      I: GetMigrationRequest,
+      O: GetMigrationResponse,
+      kind: MethodKind.Unary,
+    },
+    /**
+     * ListMigrations returns the ids of every migration; fetch full details for
+     * each via GetMigration.
+     *
+     * @generated from rpc migrator.Migrator.ListMigrations
+     */
+    listMigrations: {
+      name: "ListMigrations",
+      I: ListMigrationsRequest,
+      O: ListMigrationsResponse,
       kind: MethodKind.Unary,
     },
     /**

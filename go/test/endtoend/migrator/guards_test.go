@@ -59,16 +59,16 @@ func TestMigrationDirectionGuards(t *testing.T) {
 	id := activatedMigration(t, ctx, mt, srcPort, targetDB)
 
 	// StartMigration is IMPORT-only; on an EXPORTING migration it is rejected.
-	_, err := mt.StartMigration(ctx, &migratorpb.StartMigrationRequest{Id: id})
+	_, err := mt.StartMigration(ctx, &migratorpb.StartMigrationRequest{Ref: idRef(id)})
 	require.ErrorContains(t, err, "IMPORT direction",
 		"start must be rejected once the migration is EXPORTING")
 
 	// Activating an already-active (EXPORTING) migration is rejected.
-	_, err = mt.ActivateMigration(ctx, &migratorpb.ActivateMigrationRequest{Id: id})
+	_, err = mt.ActivateMigration(ctx, &migratorpb.ActivateMigrationRequest{Ref: idRef(id)})
 	require.ErrorContains(t, err, "already active",
 		"activating an already-EXPORTING migration must be rejected")
 
-	_, err = mt.DropMigration(ctx, &migratorpb.DropMigrationRequest{Id: id, Force: true})
+	_, err = mt.DropMigration(ctx, &migratorpb.DropMigrationRequest{Ref: idRef(id), Force: true})
 	require.NoError(t, err)
 }
 
@@ -112,9 +112,8 @@ func TestUpdateMigrationGuards(t *testing.T) {
 	// plain row rewrite (no ALTER SUBSCRIPTION), still validated as the same source
 	// database.
 	_, err = mt.UpdateMigration(ctx, &migratorpb.UpdateMigrationRequest{
-		Id:         id,
+		Migration:  &migratorpb.Migration{Id: id, SourceDsn: sourceDSN(srcPort)}, // same endpoint/database, re-validated
 		UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"source_dsn"}},
-		SourceDsn:  sourceDSN(srcPort), // same endpoint/database, re-validated
 	})
 	require.NoError(t, err, "source DSN may be repointed while CREATED")
 
@@ -125,9 +124,8 @@ func TestUpdateMigrationGuards(t *testing.T) {
 	require.NoError(t, err)
 	_ = sc.Close()
 	updResp, err := mt.UpdateMigration(ctx, &migratorpb.UpdateMigrationRequest{
-		Id:         id,
-		UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"tables"}},
-		Tables:     []string{"public.orders", "public.items"},
+		Migration:  &migratorpb.Migration{Id: id, Objects: objs("public.orders", "public.items")},
+		UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"objects"}},
 	})
 	require.NoError(t, err, "tables may be changed while CREATED")
 	require.ElementsMatch(t, []string{"public.orders", "public.items"},
@@ -135,39 +133,37 @@ func TestUpdateMigrationGuards(t *testing.T) {
 
 	// Change the sequence margin while CREATED.
 	_, err = mt.UpdateMigration(ctx, &migratorpb.UpdateMigrationRequest{
-		Id:             id,
-		UpdateMask:     &fieldmaskpb.FieldMask{Paths: []string{"sequence_margin"}},
-		SequenceMargin: 1000,
+		Migration:  &migratorpb.Migration{Id: id, SequenceMargin: 1000},
+		UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"sequence_margin"}},
 	})
 	require.NoError(t, err, "sequence margin may be changed while CREATED")
 
 	// Start the migration; once it is past CREATED, the table selection is frozen.
-	_, err = mt.StartMigration(ctx, &migratorpb.StartMigrationRequest{Id: id})
+	_, err = mt.StartMigration(ctx, &migratorpb.StartMigrationRequest{Ref: idRef(id)})
 	require.NoError(t, err)
 	require.Eventually(t, func() bool {
-		resp, err := mt.GetMigrations(ctx, &migratorpb.GetMigrationsRequest{Id: id})
-		return err == nil && len(resp.GetMigrations()) == 1 && resp.GetMigrations()[0].GetStatus().GetCaughtUp()
+		resp, err := mt.GetMigration(ctx, &migratorpb.GetMigrationRequest{Ref: idRef(id)})
+		return err == nil && resp.GetStatus().GetCaughtUp()
 	}, 60*time.Second, 500*time.Millisecond, "migration must catch up")
 
-	// List all migrations (GetMigrations with no id/name): the streaming migration
-	// must appear with its live subscription status merged in.
-	listResp, err := mt.GetMigrations(ctx, &migratorpb.GetMigrationsRequest{})
+	// List all migrations (ListMigrations returns ids; GetMigration fetches each):
+	// the streaming migration must appear with its live subscription status merged in.
+	listResp, err := mt.ListMigrations(ctx, &migratorpb.ListMigrationsRequest{})
 	require.NoError(t, err, "listing all migrations must succeed")
 	var found bool
-	for _, m := range listResp.GetMigrations() {
-		if m.GetMigration().GetId() == id {
+	for _, gotID := range listResp.GetIds() {
+		if gotID == id {
 			found = true
 		}
 	}
 	require.True(t, found, "the streaming migration must appear in the list-all result")
 
 	_, err = mt.UpdateMigration(ctx, &migratorpb.UpdateMigrationRequest{
-		Id:         id,
-		UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"tables"}},
-		Tables:     []string{"public.orders"},
+		Migration:  &migratorpb.Migration{Id: id, Objects: objs("public.orders")},
+		UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"objects"}},
 	})
 	require.ErrorContains(t, err, "CREATED", "the table selection must be frozen once the migration has started")
 
-	_, err = mt.DropMigration(ctx, &migratorpb.DropMigrationRequest{Id: id, Force: true})
+	_, err = mt.DropMigration(ctx, &migratorpb.DropMigrationRequest{Ref: idRef(id), Force: true})
 	require.NoError(t, err)
 }

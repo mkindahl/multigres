@@ -66,12 +66,12 @@ func TestTargetFailoverDuringMigration(t *testing.T) {
 	})
 	require.NoError(t, err)
 	id := createResp.GetMigration().GetId()
-	_, err = mt.StartMigration(ctx, &migratorpb.StartMigrationRequest{Id: id})
+	_, err = mt.StartMigration(ctx, &migratorpb.StartMigrationRequest{Ref: idRef(id)})
 	require.NoError(t, err)
 
 	require.Eventually(t, func() bool {
-		resp, err := mt.GetMigrations(ctx, &migratorpb.GetMigrationsRequest{Id: id})
-		return err == nil && len(resp.GetMigrations()) == 1 && resp.GetMigrations()[0].GetStatus().GetCaughtUp()
+		resp, err := mt.GetMigration(ctx, &migratorpb.GetMigrationRequest{Ref: idRef(id)})
+		return err == nil && resp.GetStatus().GetCaughtUp()
 	}, 60*time.Second, 500*time.Millisecond, "migration must catch up before failover")
 	mtClose()
 
@@ -96,12 +96,12 @@ func TestTargetFailoverDuringMigration(t *testing.T) {
 	mt2, mt2Close := migrationClient(t, newPrimary)
 	defer mt2Close()
 	require.Eventually(t, func() bool {
-		resp, err := mt2.GetMigrations(ctx, &migratorpb.GetMigrationsRequest{Id: id})
-		if err != nil || len(resp.GetMigrations()) != 1 {
+		resp, err := mt2.GetMigration(ctx, &migratorpb.GetMigrationRequest{Ref: idRef(id)})
+		if err != nil {
 			return false
 		}
-		t.Logf("post-failover phase=%s caught_up=%v err=%q", resp.GetMigrations()[0].GetStatus().GetPhase(),
-			resp.GetMigrations()[0].GetStatus().GetCaughtUp(), resp.GetMigrations()[0].GetStatus().GetLastError())
+		t.Logf("post-failover phase=%s caught_up=%v err=%q", resp.GetStatus().GetPhase(),
+			resp.GetStatus().GetCaughtUp(), resp.GetStatus().GetLastError())
 		return true
 	}, 60*time.Second, 500*time.Millisecond, "migration must be visible on the new primary")
 

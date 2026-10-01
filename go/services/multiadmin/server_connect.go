@@ -277,9 +277,18 @@ func (a *connectAdapter) DeactivateMigration(ctx context.Context, req *connect.R
 	return connect.NewResponse(resp), nil
 }
 
-// GetMigrations forwards to the Multigres Migrator service.
-func (a *connectAdapter) GetMigrations(ctx context.Context, req *connect.Request[migratorpb.GetMigrationsRequest]) (*connect.Response[migratorpb.GetMigrationsResponse], error) {
-	resp, err := a.MultiadminServer.GetMigrations(ctx, req.Msg)
+// GetMigration forwards to the Multigres Migrator service.
+func (a *connectAdapter) GetMigration(ctx context.Context, req *connect.Request[migratorpb.GetMigrationRequest]) (*connect.Response[migratorpb.GetMigrationResponse], error) {
+	resp, err := a.MultiadminServer.GetMigration(ctx, req.Msg)
+	if err != nil {
+		return nil, err
+	}
+	return connect.NewResponse(resp), nil
+}
+
+// ListMigrations forwards to the Multigres Migrator service.
+func (a *connectAdapter) ListMigrations(ctx context.Context, req *connect.Request[migratorpb.ListMigrationsRequest]) (*connect.Response[migratorpb.ListMigrationsResponse], error) {
+	resp, err := a.MultiadminServer.ListMigrations(ctx, req.Msg)
 	if err != nil {
 		return nil, err
 	}

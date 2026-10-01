@@ -36,7 +36,8 @@ const (
 	Migrator_CreateMigration_FullMethodName     = "/migrator.Migrator/CreateMigration"
 	Migrator_StartMigration_FullMethodName      = "/migrator.Migrator/StartMigration"
 	Migrator_UpdateMigration_FullMethodName     = "/migrator.Migrator/UpdateMigration"
-	Migrator_GetMigrations_FullMethodName       = "/migrator.Migrator/GetMigrations"
+	Migrator_GetMigration_FullMethodName        = "/migrator.Migrator/GetMigration"
+	Migrator_ListMigrations_FullMethodName      = "/migrator.Migrator/ListMigrations"
 	Migrator_GetMigrationJournal_FullMethodName = "/migrator.Migrator/GetMigrationJournal"
 	Migrator_ActivateMigration_FullMethodName   = "/migrator.Migrator/ActivateMigration"
 	Migrator_DeactivateMigration_FullMethodName = "/migrator.Migrator/DeactivateMigration"
@@ -58,8 +59,11 @@ type MigratorClient interface {
 	// UpdateMigration changes mutable fields (field-masked), notably the source
 	// connection.
 	UpdateMigration(ctx context.Context, in *UpdateMigrationRequest, opts ...grpc.CallOption) (*UpdateMigrationResponse, error)
-	// GetMigrations returns status for one migration (id set) or all migrations.
-	GetMigrations(ctx context.Context, in *GetMigrationsRequest, opts ...grpc.CallOption) (*GetMigrationsResponse, error)
+	// GetMigration returns status for one migration, addressed by ref (id or name).
+	GetMigration(ctx context.Context, in *GetMigrationRequest, opts ...grpc.CallOption) (*GetMigrationResponse, error)
+	// ListMigrations returns the ids of every migration; fetch full details for
+	// each via GetMigration.
+	ListMigrations(ctx context.Context, in *ListMigrationsRequest, opts ...grpc.CallOption) (*ListMigrationsResponse, error)
 	// GetMigrationJournal returns a migration's append-only audit journal (oldest
 	// first). Internal audit surface; entries are retained after a drop, so this
 	// returns them even for a migration whose row is gone (addressed by id).
@@ -113,10 +117,20 @@ func (c *migratorClient) UpdateMigration(ctx context.Context, in *UpdateMigratio
 	return out, nil
 }
 
-func (c *migratorClient) GetMigrations(ctx context.Context, in *GetMigrationsRequest, opts ...grpc.CallOption) (*GetMigrationsResponse, error) {
+func (c *migratorClient) GetMigration(ctx context.Context, in *GetMigrationRequest, opts ...grpc.CallOption) (*GetMigrationResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(GetMigrationsResponse)
-	err := c.cc.Invoke(ctx, Migrator_GetMigrations_FullMethodName, in, out, cOpts...)
+	out := new(GetMigrationResponse)
+	err := c.cc.Invoke(ctx, Migrator_GetMigration_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *migratorClient) ListMigrations(ctx context.Context, in *ListMigrationsRequest, opts ...grpc.CallOption) (*ListMigrationsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListMigrationsResponse)
+	err := c.cc.Invoke(ctx, Migrator_ListMigrations_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -178,8 +192,11 @@ type MigratorServer interface {
 	// UpdateMigration changes mutable fields (field-masked), notably the source
 	// connection.
 	UpdateMigration(context.Context, *UpdateMigrationRequest) (*UpdateMigrationResponse, error)
-	// GetMigrations returns status for one migration (id set) or all migrations.
-	GetMigrations(context.Context, *GetMigrationsRequest) (*GetMigrationsResponse, error)
+	// GetMigration returns status for one migration, addressed by ref (id or name).
+	GetMigration(context.Context, *GetMigrationRequest) (*GetMigrationResponse, error)
+	// ListMigrations returns the ids of every migration; fetch full details for
+	// each via GetMigration.
+	ListMigrations(context.Context, *ListMigrationsRequest) (*ListMigrationsResponse, error)
 	// GetMigrationJournal returns a migration's append-only audit journal (oldest
 	// first). Internal audit surface; entries are retained after a drop, so this
 	// returns them even for a migration whose row is gone (addressed by id).
@@ -212,8 +229,11 @@ func (UnimplementedMigratorServer) StartMigration(context.Context, *StartMigrati
 func (UnimplementedMigratorServer) UpdateMigration(context.Context, *UpdateMigrationRequest) (*UpdateMigrationResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method UpdateMigration not implemented")
 }
-func (UnimplementedMigratorServer) GetMigrations(context.Context, *GetMigrationsRequest) (*GetMigrationsResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method GetMigrations not implemented")
+func (UnimplementedMigratorServer) GetMigration(context.Context, *GetMigrationRequest) (*GetMigrationResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetMigration not implemented")
+}
+func (UnimplementedMigratorServer) ListMigrations(context.Context, *ListMigrationsRequest) (*ListMigrationsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListMigrations not implemented")
 }
 func (UnimplementedMigratorServer) GetMigrationJournal(context.Context, *GetMigrationJournalRequest) (*GetMigrationJournalResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetMigrationJournal not implemented")
@@ -302,20 +322,38 @@ func _Migrator_UpdateMigration_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Migrator_GetMigrations_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(GetMigrationsRequest)
+func _Migrator_GetMigration_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetMigrationRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(MigratorServer).GetMigrations(ctx, in)
+		return srv.(MigratorServer).GetMigration(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Migrator_GetMigrations_FullMethodName,
+		FullMethod: Migrator_GetMigration_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MigratorServer).GetMigrations(ctx, req.(*GetMigrationsRequest))
+		return srv.(MigratorServer).GetMigration(ctx, req.(*GetMigrationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Migrator_ListMigrations_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListMigrationsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MigratorServer).ListMigrations(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Migrator_ListMigrations_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MigratorServer).ListMigrations(ctx, req.(*ListMigrationsRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -412,8 +450,12 @@ var Migrator_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Migrator_UpdateMigration_Handler,
 		},
 		{
-			MethodName: "GetMigrations",
-			Handler:    _Migrator_GetMigrations_Handler,
+			MethodName: "GetMigration",
+			Handler:    _Migrator_GetMigration_Handler,
+		},
+		{
+			MethodName: "ListMigrations",
+			Handler:    _Migrator_ListMigrations_Handler,
 		},
 		{
 			MethodName: "GetMigrationJournal",

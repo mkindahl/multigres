@@ -74,11 +74,11 @@ func TestGracefulDropOfActivatedMigrationRestoresServing(t *testing.T) {
 	// regression fails as a timeout rather than hanging the whole suite.
 	dropCtx, dropCancel := context.WithTimeout(ctx, 45*time.Second)
 	defer dropCancel()
-	_, err := mt.DropMigration(dropCtx, &migratorpb.DropMigrationRequest{Id: id})
+	_, err := mt.DropMigration(dropCtx, &migratorpb.DropMigrationRequest{Ref: idRef(id)})
 	require.NoError(t, err, "graceful drop of an EXPORTING migration must complete, not hang on the wrong drain")
 
 	// The migration is gone.
-	_, err = mt.GetMigrations(ctx, &migratorpb.GetMigrationsRequest{Id: id})
+	_, err = mt.GetMigration(ctx, &migratorpb.GetMigrationRequest{Ref: idRef(id)})
 	require.Error(t, err, "the dropped migration must no longer resolve")
 
 	// Serving is restored: the gate releases once the row is deleted.
@@ -150,7 +150,7 @@ func TestGracefulDropDrainFailurePreservesServing(t *testing.T) {
 
 	// A graceful drop now cannot drain; it must fail rather than hang forever...
 	dropCtx, dropCancel := context.WithTimeout(ctx, 10*time.Second)
-	_, err = mt.DropMigration(dropCtx, &migratorpb.DropMigrationRequest{Id: id})
+	_, err = mt.DropMigration(dropCtx, &migratorpb.DropMigrationRequest{Ref: idRef(id)})
 	dropCancel()
 	require.Error(t, err, "a drop whose drain cannot reach lag zero must fail, not hang")
 
@@ -158,10 +158,10 @@ func TestGracefulDropDrainFailurePreservesServing(t *testing.T) {
 	// the serving gate releases again and the migration is still present.
 	requireServingStatus(t, ctx, grpcPort, clustermetadatapb.PoolerServingStatus_SERVING,
 		"a failed drain must not strand the shard non-serving")
-	resp, err := mt.GetMigrations(ctx, &migratorpb.GetMigrationsRequest{Id: id})
+	resp, err := mt.GetMigration(ctx, &migratorpb.GetMigrationRequest{Ref: idRef(id)})
 	require.NoError(t, err, "the migration must survive a failed drain")
 	require.Equal(t, migratorpb.MigrationPhase_MIGRATION_PHASE_EXPORTING,
-		resp.GetMigrations()[0].GetStatus().GetPhase(), "phase must be rolled back to EXPORTING")
+		resp.GetStatus().GetPhase(), "phase must be rolled back to EXPORTING")
 
 	// Recover the link and drop again — now it completes.
 	sc = dialSource(t, ctx, srcPort)
@@ -171,7 +171,7 @@ func TestGracefulDropDrainFailurePreservesServing(t *testing.T) {
 
 	retryCtx, retryCancel := context.WithTimeout(ctx, 45*time.Second)
 	defer retryCancel()
-	_, err = mt.DropMigration(retryCtx, &migratorpb.DropMigrationRequest{Id: id})
+	_, err = mt.DropMigration(retryCtx, &migratorpb.DropMigrationRequest{Ref: idRef(id)})
 	require.NoError(t, err, "a graceful drop must succeed once the link recovers")
 	requireServingStatus(t, ctx, grpcPort, clustermetadatapb.PoolerServingStatus_SERVING,
 		"after the successful drop the shard serves again")
@@ -191,14 +191,14 @@ func activatedMigration(t *testing.T, ctx context.Context, mt migratorpb.Migrato
 	require.NoError(t, err)
 	id := createResp.GetMigration().GetId()
 
-	_, err = mt.StartMigration(ctx, &migratorpb.StartMigrationRequest{Id: id})
+	_, err = mt.StartMigration(ctx, &migratorpb.StartMigrationRequest{Ref: idRef(id)})
 	require.NoError(t, err)
 	require.Eventually(t, func() bool {
-		resp, err := mt.GetMigrations(ctx, &migratorpb.GetMigrationsRequest{Id: id})
-		return err == nil && len(resp.GetMigrations()) == 1 && resp.GetMigrations()[0].GetStatus().GetCaughtUp()
+		resp, err := mt.GetMigration(ctx, &migratorpb.GetMigrationRequest{Ref: idRef(id)})
+		return err == nil && resp.GetStatus().GetCaughtUp()
 	}, 60*time.Second, 500*time.Millisecond, "IMPORT must catch up")
 
-	exportResp, err := mt.ActivateMigration(ctx, &migratorpb.ActivateMigrationRequest{Id: id})
+	exportResp, err := mt.ActivateMigration(ctx, &migratorpb.ActivateMigrationRequest{Ref: idRef(id)})
 	require.NoError(t, err)
 	require.Equal(t, migratorpb.MigrationDirection_MIGRATION_DIRECTION_EXPORT,
 		exportResp.GetStatus().GetActiveDirection(), "activate must switch to EXPORT")

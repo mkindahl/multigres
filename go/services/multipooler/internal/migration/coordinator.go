@@ -1480,6 +1480,7 @@ type Projection struct {
 	TargetDatabase   string
 	TargetShard      string
 	Tables           []string
+	SequenceMargin   int64
 	PublicationName  string
 	SubscriptionName string
 	TotalRelations   int64
@@ -1508,6 +1509,7 @@ func (c *Coordinator) project(m *Migration, status *SubscriptionStatus) *Project
 		TargetDatabase:   m.TargetDatabase,
 		TargetShard:      m.TargetShard,
 		Tables:           m.Tables,
+		SequenceMargin:   m.SequenceMargin,
 		PublicationName:  m.PublicationName(),
 		SubscriptionName: m.SubscriptionName(),
 		LastError:        m.LastError,

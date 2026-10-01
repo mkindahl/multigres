@@ -66,19 +66,19 @@ func TestActivateDeactivateMigration(t *testing.T) {
 	})
 	require.NoError(t, err)
 	id := createResp.GetMigration().GetId()
-	_, err = mt.StartMigration(ctx, &migratorpb.StartMigrationRequest{Id: id})
+	_, err = mt.StartMigration(ctx, &migratorpb.StartMigrationRequest{Ref: idRef(id)})
 	require.NoError(t, err)
 
 	require.Eventually(t, func() bool {
-		resp, err := mt.GetMigrations(ctx, &migratorpb.GetMigrationsRequest{Id: id})
-		return err == nil && len(resp.GetMigrations()) == 1 && resp.GetMigrations()[0].GetStatus().GetCaughtUp()
+		resp, err := mt.GetMigration(ctx, &migratorpb.GetMigrationRequest{Ref: idRef(id)})
+		return err == nil && resp.GetStatus().GetCaughtUp()
 	}, 60*time.Second, 500*time.Millisecond, "IMPORT must catch up")
 
 	tc := targetConn(t, ctx, primary, targetDB)
 	defer tc.Close()
 
 	// Activate (switch to EXPORT): Multigres becomes the source of truth.
-	exportResp, err := mt.ActivateMigration(ctx, &migratorpb.ActivateMigrationRequest{Id: id})
+	exportResp, err := mt.ActivateMigration(ctx, &migratorpb.ActivateMigrationRequest{Ref: idRef(id)})
 	require.NoError(t, err)
 	require.Equal(t, migratorpb.MigrationDirection_MIGRATION_DIRECTION_EXPORT, exportResp.GetStatus().GetActiveDirection())
 
@@ -94,7 +94,7 @@ func TestActivateDeactivateMigration(t *testing.T) {
 	}, 30*time.Second, 500*time.Millisecond, "EXPORT: target write must reach the old database")
 
 	// Deactivate (switch back to IMPORT): the old database is the source of truth again.
-	importResp, err := mt.DeactivateMigration(ctx, &migratorpb.DeactivateMigrationRequest{Id: id})
+	importResp, err := mt.DeactivateMigration(ctx, &migratorpb.DeactivateMigrationRequest{Ref: idRef(id)})
 	require.NoError(t, err)
 	require.Equal(t, migratorpb.MigrationDirection_MIGRATION_DIRECTION_IMPORT, importResp.GetStatus().GetActiveDirection())
 
@@ -111,9 +111,9 @@ func TestActivateDeactivateMigration(t *testing.T) {
 
 	// Deactivating an already-importing (non-active) migration is rejected — the
 	// activate/deactivate verbs are self-guarding.
-	_, err = mt.DeactivateMigration(ctx, &migratorpb.DeactivateMigrationRequest{Id: id})
+	_, err = mt.DeactivateMigration(ctx, &migratorpb.DeactivateMigrationRequest{Ref: idRef(id)})
 	require.Error(t, err, "deactivating a non-active (IMPORT) migration must be rejected")
 
-	_, err = mt.DropMigration(ctx, &migratorpb.DropMigrationRequest{Id: id, Force: true})
+	_, err = mt.DropMigration(ctx, &migratorpb.DropMigrationRequest{Ref: idRef(id), Force: true})
 	require.NoError(t, err)
 }

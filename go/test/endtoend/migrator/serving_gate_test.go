@@ -91,12 +91,12 @@ func TestServingGate(t *testing.T) {
 	requireServingStatus(t, ctx, grpcPort, clustermetadatapb.PoolerServingStatus_DRAINING,
 		"a CREATED migration must hold serving (non-serving)")
 
-	_, err = mt.StartMigration(ctx, &migratorpb.StartMigrationRequest{Id: id})
+	_, err = mt.StartMigration(ctx, &migratorpb.StartMigrationRequest{Ref: idRef(id)})
 	require.NoError(t, err)
 
 	require.Eventually(t, func() bool {
-		resp, err := mt.GetMigrations(ctx, &migratorpb.GetMigrationsRequest{Id: id})
-		return err == nil && len(resp.GetMigrations()) == 1 && resp.GetMigrations()[0].GetStatus().GetCaughtUp()
+		resp, err := mt.GetMigration(ctx, &migratorpb.GetMigrationRequest{Ref: idRef(id)})
+		return err == nil && resp.GetStatus().GetCaughtUp()
 	}, 60*time.Second, 500*time.Millisecond, "IMPORT must catch up")
 
 	// IMPORTING: the target must NOT serve, even once caught up.
@@ -104,13 +104,13 @@ func TestServingGate(t *testing.T) {
 		"IMPORTING target must not serve (DRAINING) even when caught up")
 
 	// activate -> EXPORTING: the target goes live.
-	_, err = mt.ActivateMigration(ctx, &migratorpb.ActivateMigrationRequest{Id: id})
+	_, err = mt.ActivateMigration(ctx, &migratorpb.ActivateMigrationRequest{Ref: idRef(id)})
 	require.NoError(t, err)
 	requireServingStatus(t, ctx, grpcPort, clustermetadatapb.PoolerServingStatus_SERVING,
 		"activate (EXPORT) must make the target serve")
 
 	// deactivate -> IMPORTING: back to not serving.
-	_, err = mt.DeactivateMigration(ctx, &migratorpb.DeactivateMigrationRequest{Id: id})
+	_, err = mt.DeactivateMigration(ctx, &migratorpb.DeactivateMigrationRequest{Ref: idRef(id)})
 	require.NoError(t, err)
 	requireServingStatus(t, ctx, grpcPort, clustermetadatapb.PoolerServingStatus_DRAINING,
 		"deactivate (IMPORT) must stop serving again")
@@ -118,7 +118,7 @@ func TestServingGate(t *testing.T) {
 	// drop -> the migration is gone, so the gate releases and the shard serves as a
 	// standalone shard. Force tears down immediately (skipping the caught-up/drain
 	// barrier) — this test only cares that the serving hold clears after the drop.
-	_, err = mt.DropMigration(ctx, &migratorpb.DropMigrationRequest{Id: id, Force: true})
+	_, err = mt.DropMigration(ctx, &migratorpb.DropMigrationRequest{Ref: idRef(id), Force: true})
 	require.NoError(t, err)
 	requireServingStatus(t, ctx, grpcPort, clustermetadatapb.PoolerServingStatus_SERVING,
 		"after drop the shard serves again")

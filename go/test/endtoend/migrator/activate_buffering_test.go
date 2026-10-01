@@ -88,14 +88,14 @@ func TestActivateBuffersClientQueriesAcrossCutover(t *testing.T) {
 	})
 	require.NoError(t, err)
 	id := createResp.GetMigration().GetId()
-	_, err = mt.StartMigration(ctx, &migratorpb.StartMigrationRequest{Id: id})
+	_, err = mt.StartMigration(ctx, &migratorpb.StartMigrationRequest{Ref: idRef(id)})
 	require.NoError(t, err)
 
 	// Wait until the IMPORT is caught up (lag ~0). The readiness gate then admits the
 	// cutover immediately, so it fits inside the gateway buffer window.
 	require.Eventually(t, func() bool {
-		resp, err := mt.GetMigrations(ctx, &migratorpb.GetMigrationsRequest{Id: id})
-		return err == nil && len(resp.GetMigrations()) == 1 && resp.GetMigrations()[0].GetStatus().GetCaughtUp()
+		resp, err := mt.GetMigration(ctx, &migratorpb.GetMigrationRequest{Ref: idRef(id)})
+		return err == nil && resp.GetStatus().GetCaughtUp()
 	}, 60*time.Second, 500*time.Millisecond, "IMPORT must catch up")
 
 	// Client connections to the gateway. The pool is opened while the shard is
@@ -146,7 +146,7 @@ func TestActivateBuffersClientQueriesAcrossCutover(t *testing.T) {
 	// Give the writers a moment to actually buffer against the non-serving shard,
 	// then cut over. The writes in flight must survive the cutover.
 	time.Sleep(500 * time.Millisecond)
-	exportResp, err := mt.ActivateMigration(ctx, &migratorpb.ActivateMigrationRequest{Id: id})
+	exportResp, err := mt.ActivateMigration(ctx, &migratorpb.ActivateMigrationRequest{Ref: idRef(id)})
 	require.NoError(t, err)
 	require.Equal(t, migratorpb.MigrationDirection_MIGRATION_DIRECTION_EXPORT, exportResp.GetStatus().GetActiveDirection())
 
@@ -184,7 +184,7 @@ func TestActivateBuffersClientQueriesAcrossCutover(t *testing.T) {
 		return srcN == tgtN && srcN > 3 && srcSum == tgtSum
 	}, 30*time.Second, 500*time.Millisecond, "source and target must converge byte-identical after EXPORT")
 
-	_, err = mt.DropMigration(ctx, &migratorpb.DropMigrationRequest{Id: id, Force: true})
+	_, err = mt.DropMigration(ctx, &migratorpb.DropMigrationRequest{Ref: idRef(id), Force: true})
 	require.NoError(t, err)
 }
 

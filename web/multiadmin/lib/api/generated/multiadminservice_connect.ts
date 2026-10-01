@@ -19,7 +19,7 @@
 
 import { ApplyCertifiedRuleChangeRequest, ApplyCertifiedRuleChangeResponse, BackupRequest, BackupResponse, ExpireBackupsRequest, ExpireBackupsResponse, GetBackupJobStatusRequest, GetBackupJobStatusResponse, GetBackupsRequest, GetBackupsResponse, GetCellNamesRequest, GetCellNamesResponse, GetCellRequest, GetCellResponse, GetDatabaseNamesRequest, GetDatabaseNamesResponse, GetDatabaseRequest, GetDatabaseResponse, GetGatewayConsolidatorRequest, GetGatewayConsolidatorResponse, GetGatewayQueriesRequest, GetGatewayQueriesResponse, GetGatewaysRequest, GetGatewaysResponse, GetOrchsRequest, GetOrchsResponse, GetPoolersRequest, GetPoolersResponse, GetPoolerStatusRequest, GetPoolerStatusResponse, SetPostgresRestartsEnabledRequest, SetPostgresRestartsEnabledResponse, SwitchPrimaryRequest, SwitchPrimaryResponse, VerifyBackupsRequest, VerifyBackupsResponse } from "./multiadminservice_pb";
 import { MethodKind } from "@bufbuild/protobuf";
-import { ActivateMigrationRequest, ActivateMigrationResponse, CreateMigrationRequest, CreateMigrationResponse, DeactivateMigrationRequest, DeactivateMigrationResponse, DropMigrationRequest, DropMigrationResponse, GetMigrationsRequest, GetMigrationsResponse, StartMigrationRequest, StartMigrationResponse, UpdateMigrationRequest, UpdateMigrationResponse } from "./migratorservice_pb";
+import { ActivateMigrationRequest, ActivateMigrationResponse, CreateMigrationRequest, CreateMigrationResponse, DeactivateMigrationRequest, DeactivateMigrationResponse, DropMigrationRequest, DropMigrationResponse, GetMigrationRequest, GetMigrationResponse, ListMigrationsRequest, ListMigrationsResponse, StartMigrationRequest, StartMigrationResponse, UpdateMigrationRequest, UpdateMigrationResponse } from "./migratorservice_pb";
 
 /**
  * MultiadminService provides administrative gRPC APIs for querying cluster metadata
@@ -279,14 +279,25 @@ export const MultiadminService = {
       kind: MethodKind.Unary,
     },
     /**
-     * GetMigrations returns status for one migration (id set) or all migrations.
+     * GetMigration returns status for one migration, addressed by ref (id or name).
      *
-     * @generated from rpc multiadmin.MultiadminService.GetMigrations
+     * @generated from rpc multiadmin.MultiadminService.GetMigration
      */
-    getMigrations: {
-      name: "GetMigrations",
-      I: GetMigrationsRequest,
-      O: GetMigrationsResponse,
+    getMigration: {
+      name: "GetMigration",
+      I: GetMigrationRequest,
+      O: GetMigrationResponse,
+      kind: MethodKind.Unary,
+    },
+    /**
+     * ListMigrations returns the ids of every migration.
+     *
+     * @generated from rpc multiadmin.MultiadminService.ListMigrations
+     */
+    listMigrations: {
+      name: "ListMigrations",
+      I: ListMigrationsRequest,
+      O: ListMigrationsResponse,
       kind: MethodKind.Unary,
     },
     /**

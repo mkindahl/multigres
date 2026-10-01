@@ -55,8 +55,10 @@ const (
 	// MigratorUpdateMigrationProcedure is the fully-qualified name of the Migrator's UpdateMigration
 	// RPC.
 	MigratorUpdateMigrationProcedure = "/migrator.Migrator/UpdateMigration"
-	// MigratorGetMigrationsProcedure is the fully-qualified name of the Migrator's GetMigrations RPC.
-	MigratorGetMigrationsProcedure = "/migrator.Migrator/GetMigrations"
+	// MigratorGetMigrationProcedure is the fully-qualified name of the Migrator's GetMigration RPC.
+	MigratorGetMigrationProcedure = "/migrator.Migrator/GetMigration"
+	// MigratorListMigrationsProcedure is the fully-qualified name of the Migrator's ListMigrations RPC.
+	MigratorListMigrationsProcedure = "/migrator.Migrator/ListMigrations"
 	// MigratorGetMigrationJournalProcedure is the fully-qualified name of the Migrator's
 	// GetMigrationJournal RPC.
 	MigratorGetMigrationJournalProcedure = "/migrator.Migrator/GetMigrationJournal"
@@ -80,8 +82,11 @@ type MigratorClient interface {
 	// UpdateMigration changes mutable fields (field-masked), notably the source
 	// connection.
 	UpdateMigration(context.Context, *connect.Request[migrator.UpdateMigrationRequest]) (*connect.Response[migrator.UpdateMigrationResponse], error)
-	// GetMigrations returns status for one migration (id set) or all migrations.
-	GetMigrations(context.Context, *connect.Request[migrator.GetMigrationsRequest]) (*connect.Response[migrator.GetMigrationsResponse], error)
+	// GetMigration returns status for one migration, addressed by ref (id or name).
+	GetMigration(context.Context, *connect.Request[migrator.GetMigrationRequest]) (*connect.Response[migrator.GetMigrationResponse], error)
+	// ListMigrations returns the ids of every migration; fetch full details for
+	// each via GetMigration.
+	ListMigrations(context.Context, *connect.Request[migrator.ListMigrationsRequest]) (*connect.Response[migrator.ListMigrationsResponse], error)
 	// GetMigrationJournal returns a migration's append-only audit journal (oldest
 	// first). Internal audit surface; entries are retained after a drop, so this
 	// returns them even for a migration whose row is gone (addressed by id).
@@ -126,10 +131,16 @@ func NewMigratorClient(httpClient connect.HTTPClient, baseURL string, opts ...co
 			connect.WithSchema(migratorMethods.ByName("UpdateMigration")),
 			connect.WithClientOptions(opts...),
 		),
-		getMigrations: connect.NewClient[migrator.GetMigrationsRequest, migrator.GetMigrationsResponse](
+		getMigration: connect.NewClient[migrator.GetMigrationRequest, migrator.GetMigrationResponse](
 			httpClient,
-			baseURL+MigratorGetMigrationsProcedure,
-			connect.WithSchema(migratorMethods.ByName("GetMigrations")),
+			baseURL+MigratorGetMigrationProcedure,
+			connect.WithSchema(migratorMethods.ByName("GetMigration")),
+			connect.WithClientOptions(opts...),
+		),
+		listMigrations: connect.NewClient[migrator.ListMigrationsRequest, migrator.ListMigrationsResponse](
+			httpClient,
+			baseURL+MigratorListMigrationsProcedure,
+			connect.WithSchema(migratorMethods.ByName("ListMigrations")),
 			connect.WithClientOptions(opts...),
 		),
 		getMigrationJournal: connect.NewClient[migrator.GetMigrationJournalRequest, migrator.GetMigrationJournalResponse](
@@ -164,7 +175,8 @@ type migratorClient struct {
 	createMigration     *connect.Client[migrator.CreateMigrationRequest, migrator.CreateMigrationResponse]
 	startMigration      *connect.Client[migrator.StartMigrationRequest, migrator.StartMigrationResponse]
 	updateMigration     *connect.Client[migrator.UpdateMigrationRequest, migrator.UpdateMigrationResponse]
-	getMigrations       *connect.Client[migrator.GetMigrationsRequest, migrator.GetMigrationsResponse]
+	getMigration        *connect.Client[migrator.GetMigrationRequest, migrator.GetMigrationResponse]
+	listMigrations      *connect.Client[migrator.ListMigrationsRequest, migrator.ListMigrationsResponse]
 	getMigrationJournal *connect.Client[migrator.GetMigrationJournalRequest, migrator.GetMigrationJournalResponse]
 	activateMigration   *connect.Client[migrator.ActivateMigrationRequest, migrator.ActivateMigrationResponse]
 	deactivateMigration *connect.Client[migrator.DeactivateMigrationRequest, migrator.DeactivateMigrationResponse]
@@ -186,9 +198,14 @@ func (c *migratorClient) UpdateMigration(ctx context.Context, req *connect.Reque
 	return c.updateMigration.CallUnary(ctx, req)
 }
 
-// GetMigrations calls migrator.Migrator.GetMigrations.
-func (c *migratorClient) GetMigrations(ctx context.Context, req *connect.Request[migrator.GetMigrationsRequest]) (*connect.Response[migrator.GetMigrationsResponse], error) {
-	return c.getMigrations.CallUnary(ctx, req)
+// GetMigration calls migrator.Migrator.GetMigration.
+func (c *migratorClient) GetMigration(ctx context.Context, req *connect.Request[migrator.GetMigrationRequest]) (*connect.Response[migrator.GetMigrationResponse], error) {
+	return c.getMigration.CallUnary(ctx, req)
+}
+
+// ListMigrations calls migrator.Migrator.ListMigrations.
+func (c *migratorClient) ListMigrations(ctx context.Context, req *connect.Request[migrator.ListMigrationsRequest]) (*connect.Response[migrator.ListMigrationsResponse], error) {
+	return c.listMigrations.CallUnary(ctx, req)
 }
 
 // GetMigrationJournal calls migrator.Migrator.GetMigrationJournal.
@@ -221,8 +238,11 @@ type MigratorHandler interface {
 	// UpdateMigration changes mutable fields (field-masked), notably the source
 	// connection.
 	UpdateMigration(context.Context, *connect.Request[migrator.UpdateMigrationRequest]) (*connect.Response[migrator.UpdateMigrationResponse], error)
-	// GetMigrations returns status for one migration (id set) or all migrations.
-	GetMigrations(context.Context, *connect.Request[migrator.GetMigrationsRequest]) (*connect.Response[migrator.GetMigrationsResponse], error)
+	// GetMigration returns status for one migration, addressed by ref (id or name).
+	GetMigration(context.Context, *connect.Request[migrator.GetMigrationRequest]) (*connect.Response[migrator.GetMigrationResponse], error)
+	// ListMigrations returns the ids of every migration; fetch full details for
+	// each via GetMigration.
+	ListMigrations(context.Context, *connect.Request[migrator.ListMigrationsRequest]) (*connect.Response[migrator.ListMigrationsResponse], error)
 	// GetMigrationJournal returns a migration's append-only audit journal (oldest
 	// first). Internal audit surface; entries are retained after a drop, so this
 	// returns them even for a migration whose row is gone (addressed by id).
@@ -263,10 +283,16 @@ func NewMigratorHandler(svc MigratorHandler, opts ...connect.HandlerOption) (str
 		connect.WithSchema(migratorMethods.ByName("UpdateMigration")),
 		connect.WithHandlerOptions(opts...),
 	)
-	migratorGetMigrationsHandler := connect.NewUnaryHandler(
-		MigratorGetMigrationsProcedure,
-		svc.GetMigrations,
-		connect.WithSchema(migratorMethods.ByName("GetMigrations")),
+	migratorGetMigrationHandler := connect.NewUnaryHandler(
+		MigratorGetMigrationProcedure,
+		svc.GetMigration,
+		connect.WithSchema(migratorMethods.ByName("GetMigration")),
+		connect.WithHandlerOptions(opts...),
+	)
+	migratorListMigrationsHandler := connect.NewUnaryHandler(
+		MigratorListMigrationsProcedure,
+		svc.ListMigrations,
+		connect.WithSchema(migratorMethods.ByName("ListMigrations")),
 		connect.WithHandlerOptions(opts...),
 	)
 	migratorGetMigrationJournalHandler := connect.NewUnaryHandler(
@@ -301,8 +327,10 @@ func NewMigratorHandler(svc MigratorHandler, opts ...connect.HandlerOption) (str
 			migratorStartMigrationHandler.ServeHTTP(w, r)
 		case MigratorUpdateMigrationProcedure:
 			migratorUpdateMigrationHandler.ServeHTTP(w, r)
-		case MigratorGetMigrationsProcedure:
-			migratorGetMigrationsHandler.ServeHTTP(w, r)
+		case MigratorGetMigrationProcedure:
+			migratorGetMigrationHandler.ServeHTTP(w, r)
+		case MigratorListMigrationsProcedure:
+			migratorListMigrationsHandler.ServeHTTP(w, r)
 		case MigratorGetMigrationJournalProcedure:
 			migratorGetMigrationJournalHandler.ServeHTTP(w, r)
 		case MigratorActivateMigrationProcedure:
@@ -332,8 +360,12 @@ func (UnimplementedMigratorHandler) UpdateMigration(context.Context, *connect.Re
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("migrator.Migrator.UpdateMigration is not implemented"))
 }
 
-func (UnimplementedMigratorHandler) GetMigrations(context.Context, *connect.Request[migrator.GetMigrationsRequest]) (*connect.Response[migrator.GetMigrationsResponse], error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("migrator.Migrator.GetMigrations is not implemented"))
+func (UnimplementedMigratorHandler) GetMigration(context.Context, *connect.Request[migrator.GetMigrationRequest]) (*connect.Response[migrator.GetMigrationResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("migrator.Migrator.GetMigration is not implemented"))
+}
+
+func (UnimplementedMigratorHandler) ListMigrations(context.Context, *connect.Request[migrator.ListMigrationsRequest]) (*connect.Response[migrator.ListMigrationsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("migrator.Migrator.ListMigrations is not implemented"))
 }
 
 func (UnimplementedMigratorHandler) GetMigrationJournal(context.Context, *connect.Request[migrator.GetMigrationJournalRequest]) (*connect.Response[migrator.GetMigrationJournalResponse], error) {

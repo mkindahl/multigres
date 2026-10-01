@@ -66,15 +66,15 @@ func TestImportHappyPathAndDrop(t *testing.T) {
 	require.NotEmpty(t, id)
 	require.Equal(t, migratorpb.MigrationPhase_MIGRATION_PHASE_CREATED, createResp.GetStatus().GetPhase())
 
-	startResp, err := mt.StartMigration(ctx, &migratorpb.StartMigrationRequest{Id: id})
+	startResp, err := mt.StartMigration(ctx, &migratorpb.StartMigrationRequest{Ref: idRef(id)})
 	require.NoError(t, err, "start; last_error=%s", startResp.GetStatus().GetLastError())
 
 	require.Eventually(t, func() bool {
-		resp, err := mt.GetMigrations(ctx, &migratorpb.GetMigrationsRequest{Id: id})
-		if err != nil || len(resp.GetMigrations()) == 0 {
+		resp, err := mt.GetMigration(ctx, &migratorpb.GetMigrationRequest{Ref: idRef(id)})
+		if err != nil {
 			return false
 		}
-		st := resp.GetMigrations()[0].GetStatus()
+		st := resp.GetStatus()
 		t.Logf("phase=%s ready=%d/%d caught_up=%v err=%q",
 			st.GetPhase(), st.GetReadyRelations(), st.GetTotalRelations(), st.GetCaughtUp(), st.GetLastError())
 		return st.GetCaughtUp()
@@ -99,7 +99,7 @@ func TestImportHappyPathAndDrop(t *testing.T) {
 
 	// Drop with the default drain: quiesce source, drain, advance target
 	// sequences, tear down.
-	_, err = mt.DropMigration(ctx, &migratorpb.DropMigrationRequest{Id: id})
+	_, err = mt.DropMigration(ctx, &migratorpb.DropMigrationRequest{Ref: idRef(id)})
 	require.NoError(t, err)
 
 	// The subscription must be gone on the target.
@@ -154,15 +154,15 @@ func TestDropForceVsDefault(t *testing.T) {
 	id := createResp.GetMigration().GetId()
 
 	// Default drop on a CREATED (not started) migration is refused.
-	_, err = mt.DropMigration(ctx, &migratorpb.DropMigrationRequest{Id: id})
+	_, err = mt.DropMigration(ctx, &migratorpb.DropMigrationRequest{Ref: idRef(id)})
 	require.Error(t, err)
 
 	// --force removes it regardless of phase.
-	_, err = mt.DropMigration(ctx, &migratorpb.DropMigrationRequest{Id: id, Force: true})
+	_, err = mt.DropMigration(ctx, &migratorpb.DropMigrationRequest{Ref: idRef(id), Force: true})
 	require.NoError(t, err)
 
 	// It is gone.
-	_, err = mt.GetMigrations(ctx, &migratorpb.GetMigrationsRequest{Id: id})
+	_, err = mt.GetMigration(ctx, &migratorpb.GetMigrationRequest{Ref: idRef(id)})
 	require.Error(t, err)
 	require.Equal(t, codes.NotFound, status.Code(err))
 }

@@ -44,6 +44,16 @@ import (
 
 const sourcePassword = "srcpass"
 
+// idRef and nameRef build a MigrationRef addressed by id or name, for the
+// Start/Activate/Deactivate/Drop/GetMigration requests across this suite.
+func idRef(id int64) *migratorpb.MigrationRef {
+	return &migratorpb.MigrationRef{Ref: &migratorpb.MigrationRef_Id{Id: id}}
+}
+
+func nameRef(name string) *migratorpb.MigrationRef {
+	return &migratorpb.MigrationRef{Ref: &migratorpb.MigrationRef_Name{Name: name}}
+}
+
 // objs builds a structured table selection from plain "schema.table" names — the
 // common case for the migration tests. For "*" / "schema.*" markers use sel.
 func objs(names ...string) *migratorpb.SelectionObject {

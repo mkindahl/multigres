@@ -65,12 +65,12 @@ func TestUpdateMigrationConnection(t *testing.T) {
 	})
 	require.NoError(t, err)
 	id := createResp.GetMigration().GetId()
-	_, err = mt.StartMigration(ctx, &migratorpb.StartMigrationRequest{Id: id})
+	_, err = mt.StartMigration(ctx, &migratorpb.StartMigrationRequest{Ref: idRef(id)})
 	require.NoError(t, err)
 
 	require.Eventually(t, func() bool {
-		resp, err := mt.GetMigrations(ctx, &migratorpb.GetMigrationsRequest{Id: id})
-		return err == nil && len(resp.GetMigrations()) == 1 && resp.GetMigrations()[0].GetStatus().GetCaughtUp()
+		resp, err := mt.GetMigration(ctx, &migratorpb.GetMigrationRequest{Ref: idRef(id)})
+		return err == nil && resp.GetStatus().GetCaughtUp()
 	}, 60*time.Second, 500*time.Millisecond, "migration must catch up")
 
 	tc := targetConn(t, ctx, primary, targetDB)
@@ -86,9 +86,8 @@ func TestUpdateMigrationConnection(t *testing.T) {
 
 	newDSN := fmt.Sprintf("host=127.0.0.1 port=%d user=postgres password=%s dbname=postgres sslmode=disable", srcPort, rotated)
 	_, err = mt.UpdateMigration(ctx, &migratorpb.UpdateMigrationRequest{
-		Id:         id,
+		Migration:  &migratorpb.Migration{Id: id, SourceDsn: newDSN},
 		UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"source_dsn"}},
-		SourceDsn:  newDSN,
 	})
 	require.NoError(t, err, "update source connection")
 
@@ -108,13 +107,12 @@ func TestUpdateMigrationConnection(t *testing.T) {
 	// source database).
 	otherDB := fmt.Sprintf("host=127.0.0.1 port=%d user=postgres password=%s dbname=otherdb sslmode=disable", srcPort, rotated)
 	_, err = mt.UpdateMigration(ctx, &migratorpb.UpdateMigrationRequest{
-		Id:         id,
+		Migration:  &migratorpb.Migration{Id: id, SourceDsn: otherDB},
 		UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"source_dsn"}},
-		SourceDsn:  otherDB,
 	})
 	require.Error(t, err, "changing the source database must be rejected")
 
-	_, err = mt.DropMigration(ctx, &migratorpb.DropMigrationRequest{Id: id, Force: true})
+	_, err = mt.DropMigration(ctx, &migratorpb.DropMigrationRequest{Ref: idRef(id), Force: true})
 	require.NoError(t, err)
 }
 

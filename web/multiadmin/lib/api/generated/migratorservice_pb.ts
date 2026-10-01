@@ -57,43 +57,46 @@ export enum MigrationPhase {
   COPYING = 5,
 
   /**
-   * @generated from enum value: MIGRATION_PHASE_DROPPED = 7;
+   * @generated from enum value: MIGRATION_PHASE_DROPPED = 6;
    */
-  DROPPED = 7,
+  DROPPED = 6,
 
   /**
-   * @generated from enum value: MIGRATION_PHASE_FAILED = 8;
+   * @generated from enum value: MIGRATION_PHASE_FAILED = 7;
    */
-  FAILED = 8,
+  FAILED = 7,
 
   /**
-   * @generated from enum value: MIGRATION_PHASE_COMPLETING = 10;
+   * @generated from enum value: MIGRATION_PHASE_COMPLETING = 8;
    */
-  COMPLETING = 10,
+  COMPLETING = 8,
 
   /**
    * IMPORTING/EXPORTING are the caught-up steady states (importing from / serving
    * and exporting to the external database). SWITCHING_TO_* are the transient
-   * cutover (to export) and roll-back (to import).
+   * cutover (to export) and roll-back (to import). STREAMING/SWITCHING (the
+   * original, non-directional phases) were split into these so the phase
+   * records the direction and, mid-switch, the target it is heading to (its
+   * intent) — which makes a mid-switch failover resumable.
    *
-   * @generated from enum value: MIGRATION_PHASE_IMPORTING = 11;
+   * @generated from enum value: MIGRATION_PHASE_IMPORTING = 9;
    */
-  IMPORTING = 11,
+  IMPORTING = 9,
 
   /**
-   * @generated from enum value: MIGRATION_PHASE_EXPORTING = 12;
+   * @generated from enum value: MIGRATION_PHASE_EXPORTING = 10;
    */
-  EXPORTING = 12,
+  EXPORTING = 10,
 
   /**
-   * @generated from enum value: MIGRATION_PHASE_SWITCHING_TO_IMPORT = 13;
+   * @generated from enum value: MIGRATION_PHASE_SWITCHING_TO_IMPORT = 11;
    */
-  SWITCHING_TO_IMPORT = 13,
+  SWITCHING_TO_IMPORT = 11,
 
   /**
-   * @generated from enum value: MIGRATION_PHASE_SWITCHING_TO_EXPORT = 14;
+   * @generated from enum value: MIGRATION_PHASE_SWITCHING_TO_EXPORT = 12;
    */
-  SWITCHING_TO_EXPORT = 14,
+  SWITCHING_TO_EXPORT = 12,
 }
 // Retrieve enum metadata with: proto3.getEnumType(MigrationPhase)
 proto3.util.setEnumType(MigrationPhase, "migrator.MigrationPhase", [
@@ -103,13 +106,13 @@ proto3.util.setEnumType(MigrationPhase, "migrator.MigrationPhase", [
   { no: 3, name: "MIGRATION_PHASE_SCHEMA_COPY" },
   { no: 4, name: "MIGRATION_PHASE_CREATE_PUBLICATION" },
   { no: 5, name: "MIGRATION_PHASE_COPYING" },
-  { no: 7, name: "MIGRATION_PHASE_DROPPED" },
-  { no: 8, name: "MIGRATION_PHASE_FAILED" },
-  { no: 10, name: "MIGRATION_PHASE_COMPLETING" },
-  { no: 11, name: "MIGRATION_PHASE_IMPORTING" },
-  { no: 12, name: "MIGRATION_PHASE_EXPORTING" },
-  { no: 13, name: "MIGRATION_PHASE_SWITCHING_TO_IMPORT" },
-  { no: 14, name: "MIGRATION_PHASE_SWITCHING_TO_EXPORT" },
+  { no: 6, name: "MIGRATION_PHASE_DROPPED" },
+  { no: 7, name: "MIGRATION_PHASE_FAILED" },
+  { no: 8, name: "MIGRATION_PHASE_COMPLETING" },
+  { no: 9, name: "MIGRATION_PHASE_IMPORTING" },
+  { no: 10, name: "MIGRATION_PHASE_EXPORTING" },
+  { no: 11, name: "MIGRATION_PHASE_SWITCHING_TO_IMPORT" },
+  { no: 12, name: "MIGRATION_PHASE_SWITCHING_TO_EXPORT" },
 ]);
 
 /**
@@ -335,6 +338,14 @@ export class Migration extends Message<Migration> {
    */
   objects?: SelectionObject;
 
+  /**
+   * sequence_margin is added past each sequence's max at a direction switch.
+   * Set at create time; changeable afterward via UpdateMigration.
+   *
+   * @generated from field: int64 sequence_margin = 7;
+   */
+  sequenceMargin = protoInt64.zero;
+
   constructor(data?: PartialMessage<Migration>) {
     super();
     proto3.util.initPartial(data, this);
@@ -349,6 +360,7 @@ export class Migration extends Message<Migration> {
     { no: 4, name: "target_database", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 5, name: "target_shard", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 6, name: "objects", kind: "message", T: SelectionObject },
+    { no: 7, name: "sequence_margin", kind: "scalar", T: 3 /* ScalarType.INT64 */ },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): Migration {
@@ -371,8 +383,7 @@ export class Migration extends Message<Migration> {
 /**
  * MigrationStatus is the live, observed state of a migration workflow:
  * everything that changes after creation. Every RPC that hands back a
- * migration returns both it and the migration's static Migration (see
- * MigrationInfo).
+ * migration returns both it and the migration's static Migration.
  *
  * @generated from message migrator.MigrationStatus
  */
@@ -494,52 +505,6 @@ export class MigrationStatus extends Message<MigrationStatus> {
 
   static equals(a: MigrationStatus | PlainMessage<MigrationStatus> | undefined, b: MigrationStatus | PlainMessage<MigrationStatus> | undefined): boolean {
     return proto3.util.equals(MigrationStatus, a, b);
-  }
-}
-
-/**
- * MigrationInfo pairs a migration's static configuration with its live
- * status. It is the shape every RPC returns for one migration.
- *
- * @generated from message migrator.MigrationInfo
- */
-export class MigrationInfo extends Message<MigrationInfo> {
-  /**
-   * @generated from field: migrator.Migration migration = 1;
-   */
-  migration?: Migration;
-
-  /**
-   * @generated from field: migrator.MigrationStatus status = 2;
-   */
-  status?: MigrationStatus;
-
-  constructor(data?: PartialMessage<MigrationInfo>) {
-    super();
-    proto3.util.initPartial(data, this);
-  }
-
-  static readonly runtime: typeof proto3 = proto3;
-  static readonly typeName = "migrator.MigrationInfo";
-  static readonly fields: FieldList = proto3.util.newFieldList(() => [
-    { no: 1, name: "migration", kind: "message", T: Migration },
-    { no: 2, name: "status", kind: "message", T: MigrationStatus },
-  ]);
-
-  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): MigrationInfo {
-    return new MigrationInfo().fromBinary(bytes, options);
-  }
-
-  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): MigrationInfo {
-    return new MigrationInfo().fromJson(jsonValue, options);
-  }
-
-  static fromJsonString(jsonString: string, options?: Partial<JsonReadOptions>): MigrationInfo {
-    return new MigrationInfo().fromJsonString(jsonString, options);
-  }
-
-  static equals(a: MigrationInfo | PlainMessage<MigrationInfo> | undefined, b: MigrationInfo | PlainMessage<MigrationInfo> | undefined): boolean {
-    return proto3.util.equals(MigrationInfo, a, b);
   }
 }
 
@@ -762,13 +727,6 @@ export class CreateMigrationRequest extends Message<CreateMigrationRequest> {
   migration?: Migration;
 
   /**
-   * sequence_margin is added past each sequence's max at a direction switch.
-   *
-   * @generated from field: int64 sequence_margin = 5;
-   */
-  sequenceMargin = protoInt64.zero;
-
-  /**
    * skip_copy_data skips the initial COPY at subscription setup (the data is
    * assumed to be seeded out-of-band). false (the default) performs the
    * initial COPY.
@@ -807,7 +765,6 @@ export class CreateMigrationRequest extends Message<CreateMigrationRequest> {
   static readonly typeName = "migrator.CreateMigrationRequest";
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
     { no: 1, name: "migration", kind: "message", T: Migration },
-    { no: 5, name: "sequence_margin", kind: "scalar", T: 3 /* ScalarType.INT64 */ },
     { no: 7, name: "skip_copy_data", kind: "scalar", T: 8 /* ScalarType.BOOL */ },
     { no: 8, name: "skip_schema_copy", kind: "scalar", T: 8 /* ScalarType.BOOL */ },
     { no: 9, name: "quiesce_roles", kind: "scalar", T: 9 /* ScalarType.STRING */, repeated: true },
@@ -875,47 +832,23 @@ export class CreateMigrationResponse extends Message<CreateMigrationResponse> {
 
 /**
  * UpdateMigrationRequest changes mutable fields; only fields named in
- * update_mask are applied. Supported paths: source_dsn, sequence_margin, and
- * (only while CREATED) tables. The migration is addressed by id or, when id is
- * empty, by name.
+ * update_mask are applied. Mask paths are relative to migration (the Google
+ * API Design Guide convention), e.g. "source_dsn", "sequence_margin", or
+ * (only while CREATED) "objects". migration.id or migration.name (whichever
+ * is set) addresses the migration being updated.
  *
  * @generated from message migrator.UpdateMigrationRequest
  */
 export class UpdateMigrationRequest extends Message<UpdateMigrationRequest> {
   /**
-   * @generated from field: int64 id = 1;
+   * @generated from field: migrator.Migration migration = 3;
    */
-  id = protoInt64.zero;
+  migration?: Migration;
 
   /**
    * @generated from field: google.protobuf.FieldMask update_mask = 2;
    */
   updateMask?: FieldMask;
-
-  /**
-   * source_dsn, when in the mask, replaces the source connection (ALTER
-   * SUBSCRIPTION ... CONNECTION once the subscription exists). Never returned.
-   *
-   * @generated from field: string source_dsn = 3;
-   */
-  sourceDsn = "";
-
-  /**
-   * @generated from field: int64 sequence_margin = 4;
-   */
-  sequenceMargin = protoInt64.zero;
-
-  /**
-   * @generated from field: repeated string tables = 5;
-   */
-  tables: string[] = [];
-
-  /**
-   * name addresses the migration when id is empty (it does not rename it).
-   *
-   * @generated from field: string name = 6;
-   */
-  name = "";
 
   constructor(data?: PartialMessage<UpdateMigrationRequest>) {
     super();
@@ -925,12 +858,8 @@ export class UpdateMigrationRequest extends Message<UpdateMigrationRequest> {
   static readonly runtime: typeof proto3 = proto3;
   static readonly typeName = "migrator.UpdateMigrationRequest";
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
-    { no: 1, name: "id", kind: "scalar", T: 3 /* ScalarType.INT64 */ },
+    { no: 3, name: "migration", kind: "message", T: Migration },
     { no: 2, name: "update_mask", kind: "message", T: FieldMask },
-    { no: 3, name: "source_dsn", kind: "scalar", T: 9 /* ScalarType.STRING */ },
-    { no: 4, name: "sequence_margin", kind: "scalar", T: 3 /* ScalarType.INT64 */ },
-    { no: 5, name: "tables", kind: "scalar", T: 9 /* ScalarType.STRING */, repeated: true },
-    { no: 6, name: "name", kind: "scalar", T: 9 /* ScalarType.STRING */ },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): UpdateMigrationRequest {
@@ -994,22 +923,69 @@ export class UpdateMigrationResponse extends Message<UpdateMigrationResponse> {
 }
 
 /**
+ * MigrationRef addresses one migration: by id, or by its unique name.
+ *
+ * @generated from message migrator.MigrationRef
+ */
+export class MigrationRef extends Message<MigrationRef> {
+  /**
+   * @generated from oneof migrator.MigrationRef.ref
+   */
+  ref: {
+    /**
+     * @generated from field: int64 id = 1;
+     */
+    value: bigint;
+    case: "id";
+  } | {
+    /**
+     * @generated from field: string name = 2;
+     */
+    value: string;
+    case: "name";
+  } | { case: undefined; value?: undefined } = { case: undefined };
+
+  constructor(data?: PartialMessage<MigrationRef>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "migrator.MigrationRef";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "id", kind: "scalar", T: 3 /* ScalarType.INT64 */, oneof: "ref" },
+    { no: 2, name: "name", kind: "scalar", T: 9 /* ScalarType.STRING */, oneof: "ref" },
+  ]);
+
+  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): MigrationRef {
+    return new MigrationRef().fromBinary(bytes, options);
+  }
+
+  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): MigrationRef {
+    return new MigrationRef().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(jsonString: string, options?: Partial<JsonReadOptions>): MigrationRef {
+    return new MigrationRef().fromJsonString(jsonString, options);
+  }
+
+  static equals(a: MigrationRef | PlainMessage<MigrationRef> | undefined, b: MigrationRef | PlainMessage<MigrationRef> | undefined): boolean {
+    return proto3.util.equals(MigrationRef, a, b);
+  }
+}
+
+/**
  * ActivateMigrationRequest cuts the migration over to serving: drain to lag zero,
  * switch to the EXPORT direction, and start serving. Requires the current
- * direction to be IMPORT. Addressed by id or, when id is empty, by name.
+ * direction to be IMPORT.
  *
  * @generated from message migrator.ActivateMigrationRequest
  */
 export class ActivateMigrationRequest extends Message<ActivateMigrationRequest> {
   /**
-   * @generated from field: int64 id = 1;
+   * @generated from field: migrator.MigrationRef ref = 1;
    */
-  id = protoInt64.zero;
-
-  /**
-   * @generated from field: string name = 2;
-   */
-  name = "";
+  ref?: MigrationRef;
 
   /**
    * max_lag_bytes is the readiness threshold for the cutover. Before quiescing the
@@ -1021,9 +997,9 @@ export class ActivateMigrationRequest extends Message<ActivateMigrationRequest> 
    * relative to the gateway buffer window risks the buffer overflowing mid-cutover;
    * keeping it small enough is the operator's responsibility (not enforced here).
    *
-   * @generated from field: uint64 max_lag_bytes = 3;
+   * @generated from field: optional uint64 max_lag_bytes = 2;
    */
-  maxLagBytes = protoInt64.zero;
+  maxLagBytes?: bigint;
 
   /**
    * wait_timeout_seconds bounds how long activation blocks waiting for the lag to
@@ -1031,9 +1007,9 @@ export class ActivateMigrationRequest extends Message<ActivateMigrationRequest> 
    * reached within the timeout, activation fails with a precondition error and the
    * migration stays in the IMPORT direction (no cutover, no serving change).
    *
-   * @generated from field: int64 wait_timeout_seconds = 4;
+   * @generated from field: optional int64 wait_timeout_seconds = 3;
    */
-  waitTimeoutSeconds = protoInt64.zero;
+  waitTimeoutSeconds?: bigint;
 
   constructor(data?: PartialMessage<ActivateMigrationRequest>) {
     super();
@@ -1043,10 +1019,9 @@ export class ActivateMigrationRequest extends Message<ActivateMigrationRequest> 
   static readonly runtime: typeof proto3 = proto3;
   static readonly typeName = "migrator.ActivateMigrationRequest";
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
-    { no: 1, name: "id", kind: "scalar", T: 3 /* ScalarType.INT64 */ },
-    { no: 2, name: "name", kind: "scalar", T: 9 /* ScalarType.STRING */ },
-    { no: 3, name: "max_lag_bytes", kind: "scalar", T: 4 /* ScalarType.UINT64 */ },
-    { no: 4, name: "wait_timeout_seconds", kind: "scalar", T: 3 /* ScalarType.INT64 */ },
+    { no: 1, name: "ref", kind: "message", T: MigrationRef },
+    { no: 2, name: "max_lag_bytes", kind: "scalar", T: 4 /* ScalarType.UINT64 */, opt: true },
+    { no: 3, name: "wait_timeout_seconds", kind: "scalar", T: 3 /* ScalarType.INT64 */, opt: true },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): ActivateMigrationRequest {
@@ -1112,20 +1087,15 @@ export class ActivateMigrationResponse extends Message<ActivateMigrationResponse
 /**
  * DeactivateMigrationRequest rolls the migration back to non-serving: stop
  * serving, then switch back to the IMPORT direction. Requires the current
- * direction to be EXPORT. Addressed by id or, when id is empty, by name.
+ * direction to be EXPORT.
  *
  * @generated from message migrator.DeactivateMigrationRequest
  */
 export class DeactivateMigrationRequest extends Message<DeactivateMigrationRequest> {
   /**
-   * @generated from field: int64 id = 1;
+   * @generated from field: migrator.MigrationRef ref = 1;
    */
-  id = protoInt64.zero;
-
-  /**
-   * @generated from field: string name = 2;
-   */
-  name = "";
+  ref?: MigrationRef;
 
   constructor(data?: PartialMessage<DeactivateMigrationRequest>) {
     super();
@@ -1135,8 +1105,7 @@ export class DeactivateMigrationRequest extends Message<DeactivateMigrationReque
   static readonly runtime: typeof proto3 = proto3;
   static readonly typeName = "migrator.DeactivateMigrationRequest";
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
-    { no: 1, name: "id", kind: "scalar", T: 3 /* ScalarType.INT64 */ },
-    { no: 2, name: "name", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 1, name: "ref", kind: "message", T: MigrationRef },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): DeactivateMigrationRequest {
@@ -1200,20 +1169,15 @@ export class DeactivateMigrationResponse extends Message<DeactivateMigrationResp
 }
 
 /**
- * StartMigrationRequest is addressed by id or, when id is empty, by name.
+ * StartMigrationRequest is addressed by ref (id or name).
  *
  * @generated from message migrator.StartMigrationRequest
  */
 export class StartMigrationRequest extends Message<StartMigrationRequest> {
   /**
-   * @generated from field: int64 id = 1;
+   * @generated from field: migrator.MigrationRef ref = 1;
    */
-  id = protoInt64.zero;
-
-  /**
-   * @generated from field: string name = 2;
-   */
-  name = "";
+  ref?: MigrationRef;
 
   constructor(data?: PartialMessage<StartMigrationRequest>) {
     super();
@@ -1223,8 +1187,7 @@ export class StartMigrationRequest extends Message<StartMigrationRequest> {
   static readonly runtime: typeof proto3 = proto3;
   static readonly typeName = "migrator.StartMigrationRequest";
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
-    { no: 1, name: "id", kind: "scalar", T: 3 /* ScalarType.INT64 */ },
-    { no: 2, name: "name", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 1, name: "ref", kind: "message", T: MigrationRef },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): StartMigrationRequest {
@@ -1288,99 +1251,169 @@ export class StartMigrationResponse extends Message<StartMigrationResponse> {
 }
 
 /**
- * GetMigrationsRequest returns one migration when id or name is set, else all.
+ * GetMigrationRequest addresses one migration by ref (id or name).
  *
- * @generated from message migrator.GetMigrationsRequest
+ * @generated from message migrator.GetMigrationRequest
  */
-export class GetMigrationsRequest extends Message<GetMigrationsRequest> {
+export class GetMigrationRequest extends Message<GetMigrationRequest> {
   /**
-   * @generated from field: int64 id = 1;
+   * @generated from field: migrator.MigrationRef ref = 1;
    */
-  id = protoInt64.zero;
+  ref?: MigrationRef;
 
-  /**
-   * name selects one migration by name when id is empty.
-   *
-   * @generated from field: string name = 2;
-   */
-  name = "";
-
-  constructor(data?: PartialMessage<GetMigrationsRequest>) {
+  constructor(data?: PartialMessage<GetMigrationRequest>) {
     super();
     proto3.util.initPartial(data, this);
   }
 
   static readonly runtime: typeof proto3 = proto3;
-  static readonly typeName = "migrator.GetMigrationsRequest";
+  static readonly typeName = "migrator.GetMigrationRequest";
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
-    { no: 1, name: "id", kind: "scalar", T: 3 /* ScalarType.INT64 */ },
-    { no: 2, name: "name", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 1, name: "ref", kind: "message", T: MigrationRef },
   ]);
 
-  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): GetMigrationsRequest {
-    return new GetMigrationsRequest().fromBinary(bytes, options);
+  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): GetMigrationRequest {
+    return new GetMigrationRequest().fromBinary(bytes, options);
   }
 
-  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): GetMigrationsRequest {
-    return new GetMigrationsRequest().fromJson(jsonValue, options);
+  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): GetMigrationRequest {
+    return new GetMigrationRequest().fromJson(jsonValue, options);
   }
 
-  static fromJsonString(jsonString: string, options?: Partial<JsonReadOptions>): GetMigrationsRequest {
-    return new GetMigrationsRequest().fromJsonString(jsonString, options);
+  static fromJsonString(jsonString: string, options?: Partial<JsonReadOptions>): GetMigrationRequest {
+    return new GetMigrationRequest().fromJsonString(jsonString, options);
   }
 
-  static equals(a: GetMigrationsRequest | PlainMessage<GetMigrationsRequest> | undefined, b: GetMigrationsRequest | PlainMessage<GetMigrationsRequest> | undefined): boolean {
-    return proto3.util.equals(GetMigrationsRequest, a, b);
+  static equals(a: GetMigrationRequest | PlainMessage<GetMigrationRequest> | undefined, b: GetMigrationRequest | PlainMessage<GetMigrationRequest> | undefined): boolean {
+    return proto3.util.equals(GetMigrationRequest, a, b);
   }
 }
 
 /**
- * @generated from message migrator.GetMigrationsResponse
+ * @generated from message migrator.GetMigrationResponse
  */
-export class GetMigrationsResponse extends Message<GetMigrationsResponse> {
+export class GetMigrationResponse extends Message<GetMigrationResponse> {
   /**
-   * @generated from field: repeated migrator.MigrationInfo migrations = 1;
+   * @generated from field: migrator.Migration migration = 1;
    */
-  migrations: MigrationInfo[] = [];
+  migration?: Migration;
 
-  constructor(data?: PartialMessage<GetMigrationsResponse>) {
+  /**
+   * @generated from field: migrator.MigrationStatus status = 2;
+   */
+  status?: MigrationStatus;
+
+  constructor(data?: PartialMessage<GetMigrationResponse>) {
     super();
     proto3.util.initPartial(data, this);
   }
 
   static readonly runtime: typeof proto3 = proto3;
-  static readonly typeName = "migrator.GetMigrationsResponse";
+  static readonly typeName = "migrator.GetMigrationResponse";
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
-    { no: 1, name: "migrations", kind: "message", T: MigrationInfo, repeated: true },
+    { no: 1, name: "migration", kind: "message", T: Migration },
+    { no: 2, name: "status", kind: "message", T: MigrationStatus },
   ]);
 
-  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): GetMigrationsResponse {
-    return new GetMigrationsResponse().fromBinary(bytes, options);
+  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): GetMigrationResponse {
+    return new GetMigrationResponse().fromBinary(bytes, options);
   }
 
-  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): GetMigrationsResponse {
-    return new GetMigrationsResponse().fromJson(jsonValue, options);
+  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): GetMigrationResponse {
+    return new GetMigrationResponse().fromJson(jsonValue, options);
   }
 
-  static fromJsonString(jsonString: string, options?: Partial<JsonReadOptions>): GetMigrationsResponse {
-    return new GetMigrationsResponse().fromJsonString(jsonString, options);
+  static fromJsonString(jsonString: string, options?: Partial<JsonReadOptions>): GetMigrationResponse {
+    return new GetMigrationResponse().fromJsonString(jsonString, options);
   }
 
-  static equals(a: GetMigrationsResponse | PlainMessage<GetMigrationsResponse> | undefined, b: GetMigrationsResponse | PlainMessage<GetMigrationsResponse> | undefined): boolean {
-    return proto3.util.equals(GetMigrationsResponse, a, b);
+  static equals(a: GetMigrationResponse | PlainMessage<GetMigrationResponse> | undefined, b: GetMigrationResponse | PlainMessage<GetMigrationResponse> | undefined): boolean {
+    return proto3.util.equals(GetMigrationResponse, a, b);
   }
 }
 
 /**
- * DropMigrationRequest is addressed by id or, when id is empty, by name.
+ * ListMigrationsRequest lists the ids of every migration. At most one
+ * migration exists at a time today, so this returns 0 or 1 ids; fetch full
+ * details for each via GetMigration.
+ *
+ * @generated from message migrator.ListMigrationsRequest
+ */
+export class ListMigrationsRequest extends Message<ListMigrationsRequest> {
+  constructor(data?: PartialMessage<ListMigrationsRequest>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "migrator.ListMigrationsRequest";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+  ]);
+
+  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): ListMigrationsRequest {
+    return new ListMigrationsRequest().fromBinary(bytes, options);
+  }
+
+  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): ListMigrationsRequest {
+    return new ListMigrationsRequest().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(jsonString: string, options?: Partial<JsonReadOptions>): ListMigrationsRequest {
+    return new ListMigrationsRequest().fromJsonString(jsonString, options);
+  }
+
+  static equals(a: ListMigrationsRequest | PlainMessage<ListMigrationsRequest> | undefined, b: ListMigrationsRequest | PlainMessage<ListMigrationsRequest> | undefined): boolean {
+    return proto3.util.equals(ListMigrationsRequest, a, b);
+  }
+}
+
+/**
+ * @generated from message migrator.ListMigrationsResponse
+ */
+export class ListMigrationsResponse extends Message<ListMigrationsResponse> {
+  /**
+   * @generated from field: repeated int64 ids = 1;
+   */
+  ids: bigint[] = [];
+
+  constructor(data?: PartialMessage<ListMigrationsResponse>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "migrator.ListMigrationsResponse";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "ids", kind: "scalar", T: 3 /* ScalarType.INT64 */, repeated: true },
+  ]);
+
+  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): ListMigrationsResponse {
+    return new ListMigrationsResponse().fromBinary(bytes, options);
+  }
+
+  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): ListMigrationsResponse {
+    return new ListMigrationsResponse().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(jsonString: string, options?: Partial<JsonReadOptions>): ListMigrationsResponse {
+    return new ListMigrationsResponse().fromJsonString(jsonString, options);
+  }
+
+  static equals(a: ListMigrationsResponse | PlainMessage<ListMigrationsResponse> | undefined, b: ListMigrationsResponse | PlainMessage<ListMigrationsResponse> | undefined): boolean {
+    return proto3.util.equals(ListMigrationsResponse, a, b);
+  }
+}
+
+/**
+ * DropMigrationRequest is addressed by ref (id or name).
  *
  * @generated from message migrator.DropMigrationRequest
  */
 export class DropMigrationRequest extends Message<DropMigrationRequest> {
   /**
-   * @generated from field: int64 id = 1;
+   * @generated from field: migrator.MigrationRef ref = 1;
    */
-  id = protoInt64.zero;
+  ref?: MigrationRef;
 
   /**
    * wait blocks until the migration reaches a completable (caught-up) state,
@@ -1404,13 +1437,6 @@ export class DropMigrationRequest extends Message<DropMigrationRequest> {
    */
   force = false;
 
-  /**
-   * name addresses the migration when id is empty.
-   *
-   * @generated from field: string name = 5;
-   */
-  name = "";
-
   constructor(data?: PartialMessage<DropMigrationRequest>) {
     super();
     proto3.util.initPartial(data, this);
@@ -1419,11 +1445,10 @@ export class DropMigrationRequest extends Message<DropMigrationRequest> {
   static readonly runtime: typeof proto3 = proto3;
   static readonly typeName = "migrator.DropMigrationRequest";
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
-    { no: 1, name: "id", kind: "scalar", T: 3 /* ScalarType.INT64 */ },
+    { no: 1, name: "ref", kind: "message", T: MigrationRef },
     { no: 2, name: "wait", kind: "scalar", T: 8 /* ScalarType.BOOL */ },
     { no: 3, name: "wait_timeout_seconds", kind: "scalar", T: 3 /* ScalarType.INT64 */ },
     { no: 4, name: "force", kind: "scalar", T: 8 /* ScalarType.BOOL */ },
-    { no: 5, name: "name", kind: "scalar", T: 9 /* ScalarType.STRING */ },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): DropMigrationRequest {

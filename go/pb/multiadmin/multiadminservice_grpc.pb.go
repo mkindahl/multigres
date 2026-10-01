@@ -55,7 +55,8 @@ const (
 	MultiadminService_CreateMigration_FullMethodName            = "/multiadmin.MultiadminService/CreateMigration"
 	MultiadminService_StartMigration_FullMethodName             = "/multiadmin.MultiadminService/StartMigration"
 	MultiadminService_UpdateMigration_FullMethodName            = "/multiadmin.MultiadminService/UpdateMigration"
-	MultiadminService_GetMigrations_FullMethodName              = "/multiadmin.MultiadminService/GetMigrations"
+	MultiadminService_GetMigration_FullMethodName               = "/multiadmin.MultiadminService/GetMigration"
+	MultiadminService_ListMigrations_FullMethodName             = "/multiadmin.MultiadminService/ListMigrations"
 	MultiadminService_ActivateMigration_FullMethodName          = "/multiadmin.MultiadminService/ActivateMigration"
 	MultiadminService_DeactivateMigration_FullMethodName        = "/multiadmin.MultiadminService/DeactivateMigration"
 	MultiadminService_DropMigration_FullMethodName              = "/multiadmin.MultiadminService/DropMigration"
@@ -127,8 +128,10 @@ type MultiadminServiceClient interface {
 	StartMigration(ctx context.Context, in *migrator.StartMigrationRequest, opts ...grpc.CallOption) (*migrator.StartMigrationResponse, error)
 	// UpdateMigration changes mutable fields (field-masked), notably the source connection.
 	UpdateMigration(ctx context.Context, in *migrator.UpdateMigrationRequest, opts ...grpc.CallOption) (*migrator.UpdateMigrationResponse, error)
-	// GetMigrations returns status for one migration (id set) or all migrations.
-	GetMigrations(ctx context.Context, in *migrator.GetMigrationsRequest, opts ...grpc.CallOption) (*migrator.GetMigrationsResponse, error)
+	// GetMigration returns status for one migration, addressed by ref (id or name).
+	GetMigration(ctx context.Context, in *migrator.GetMigrationRequest, opts ...grpc.CallOption) (*migrator.GetMigrationResponse, error)
+	// ListMigrations returns the ids of every migration.
+	ListMigrations(ctx context.Context, in *migrator.ListMigrationsRequest, opts ...grpc.CallOption) (*migrator.ListMigrationsResponse, error)
 	// ActivateMigration cuts a migration over to serving (IMPORT -> EXPORT).
 	ActivateMigration(ctx context.Context, in *migrator.ActivateMigrationRequest, opts ...grpc.CallOption) (*migrator.ActivateMigrationResponse, error)
 	// DeactivateMigration rolls a migration back to non-serving (EXPORT -> IMPORT).
@@ -355,10 +358,20 @@ func (c *multiadminServiceClient) UpdateMigration(ctx context.Context, in *migra
 	return out, nil
 }
 
-func (c *multiadminServiceClient) GetMigrations(ctx context.Context, in *migrator.GetMigrationsRequest, opts ...grpc.CallOption) (*migrator.GetMigrationsResponse, error) {
+func (c *multiadminServiceClient) GetMigration(ctx context.Context, in *migrator.GetMigrationRequest, opts ...grpc.CallOption) (*migrator.GetMigrationResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(migrator.GetMigrationsResponse)
-	err := c.cc.Invoke(ctx, MultiadminService_GetMigrations_FullMethodName, in, out, cOpts...)
+	out := new(migrator.GetMigrationResponse)
+	err := c.cc.Invoke(ctx, MultiadminService_GetMigration_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *multiadminServiceClient) ListMigrations(ctx context.Context, in *migrator.ListMigrationsRequest, opts ...grpc.CallOption) (*migrator.ListMigrationsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(migrator.ListMigrationsResponse)
+	err := c.cc.Invoke(ctx, MultiadminService_ListMigrations_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -461,8 +474,10 @@ type MultiadminServiceServer interface {
 	StartMigration(context.Context, *migrator.StartMigrationRequest) (*migrator.StartMigrationResponse, error)
 	// UpdateMigration changes mutable fields (field-masked), notably the source connection.
 	UpdateMigration(context.Context, *migrator.UpdateMigrationRequest) (*migrator.UpdateMigrationResponse, error)
-	// GetMigrations returns status for one migration (id set) or all migrations.
-	GetMigrations(context.Context, *migrator.GetMigrationsRequest) (*migrator.GetMigrationsResponse, error)
+	// GetMigration returns status for one migration, addressed by ref (id or name).
+	GetMigration(context.Context, *migrator.GetMigrationRequest) (*migrator.GetMigrationResponse, error)
+	// ListMigrations returns the ids of every migration.
+	ListMigrations(context.Context, *migrator.ListMigrationsRequest) (*migrator.ListMigrationsResponse, error)
 	// ActivateMigration cuts a migration over to serving (IMPORT -> EXPORT).
 	ActivateMigration(context.Context, *migrator.ActivateMigrationRequest) (*migrator.ActivateMigrationResponse, error)
 	// DeactivateMigration rolls a migration back to non-serving (EXPORT -> IMPORT).
@@ -542,8 +557,11 @@ func (UnimplementedMultiadminServiceServer) StartMigration(context.Context, *mig
 func (UnimplementedMultiadminServiceServer) UpdateMigration(context.Context, *migrator.UpdateMigrationRequest) (*migrator.UpdateMigrationResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method UpdateMigration not implemented")
 }
-func (UnimplementedMultiadminServiceServer) GetMigrations(context.Context, *migrator.GetMigrationsRequest) (*migrator.GetMigrationsResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method GetMigrations not implemented")
+func (UnimplementedMultiadminServiceServer) GetMigration(context.Context, *migrator.GetMigrationRequest) (*migrator.GetMigrationResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetMigration not implemented")
+}
+func (UnimplementedMultiadminServiceServer) ListMigrations(context.Context, *migrator.ListMigrationsRequest) (*migrator.ListMigrationsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListMigrations not implemented")
 }
 func (UnimplementedMultiadminServiceServer) ActivateMigration(context.Context, *migrator.ActivateMigrationRequest) (*migrator.ActivateMigrationResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ActivateMigration not implemented")
@@ -953,20 +971,38 @@ func _MultiadminService_UpdateMigration_Handler(srv interface{}, ctx context.Con
 	return interceptor(ctx, in, info, handler)
 }
 
-func _MultiadminService_GetMigrations_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(migrator.GetMigrationsRequest)
+func _MultiadminService_GetMigration_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(migrator.GetMigrationRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(MultiadminServiceServer).GetMigrations(ctx, in)
+		return srv.(MultiadminServiceServer).GetMigration(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: MultiadminService_GetMigrations_FullMethodName,
+		FullMethod: MultiadminService_GetMigration_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MultiadminServiceServer).GetMigrations(ctx, req.(*migrator.GetMigrationsRequest))
+		return srv.(MultiadminServiceServer).GetMigration(ctx, req.(*migrator.GetMigrationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MultiadminService_ListMigrations_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(migrator.ListMigrationsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MultiadminServiceServer).ListMigrations(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MultiadminService_ListMigrations_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MultiadminServiceServer).ListMigrations(ctx, req.(*migrator.ListMigrationsRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1117,8 +1153,12 @@ var MultiadminService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _MultiadminService_UpdateMigration_Handler,
 		},
 		{
-			MethodName: "GetMigrations",
-			Handler:    _MultiadminService_GetMigrations_Handler,
+			MethodName: "GetMigration",
+			Handler:    _MultiadminService_GetMigration_Handler,
+		},
+		{
+			MethodName: "ListMigrations",
+			Handler:    _MultiadminService_ListMigrations_Handler,
 		},
 		{
 			MethodName: "ActivateMigration",
